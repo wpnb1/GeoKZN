@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: geokzn_postgres
+    environment:
+      POSTGRES_USER: geomessenger_user
+      POSTGRES_PASSWORD: geomessenger_pass
+      POSTGRES_DB: geomessenger
+    ports:
+      - "5432:5432"
+    volumes:
+      - geokzn_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geomessenger_user -d geomessenger"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  geokzn_pgdata:

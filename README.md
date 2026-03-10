@@ -1,50 +1,113 @@
-# Welcome to your Expo app 👋
+# GeoKZN
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Геолокационный мессенджер для города Казань: события на карте и обсуждения, привязанные к точкам.
 
-## Get started
+## Возможности
 
-1. Install dependencies
+- Просмотр карты Казани с событиями (маркеры и фильтры по типам).
+- Регистрация и вход по логину/паролю (данные в PostgreSQL).
+- Гостевой режим: можно смотреть карту без авторизации.
+- Создание событий пользователями (ДТП, Пост ДПС, Чат, Другое).
+- Просмотр карточки события и мини-карта с меткой.
+- Чат события: комментарии, редактирование и удаление своих комментариев.
+- Жалобы на события и комментарии с выбором причины (на свои жаловаться нельзя).
+- Админ-панель: просмотр жалоб, удаление цели жалобы, блокировка нарушителя, отклонение жалобы.
+- Официальные события от администратора с временем окончания (после окончания автоматически уходят в архив).
+- Архив на карте видит только администратор.
+- Карта ограничена границами города Казань (нельзя уехать далеко в другие регионы).
 
-   ```bash
-   npm install
-   ```
+## Технологии
 
-2. Start the app
+- Мобильное приложение: Expo (React Native) + react-native-maps
+- Бэкенд: Node.js (Express)
+- База данных: PostgreSQL
 
-   ```bash
-   npx expo start
-   ```
+## Быстрый старт (Windows)
 
-In the output, you'll find options to open the app in a
+### 1) Бэкенд
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+1. Установи зависимости:
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```powershell
+cd "E:\Курсовая\TestApp\backend"
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Создай файл `backend/.env` (пример):
 
-## Learn more
+```env
+PORT=4000
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=geomessenger
+DB_USER=geomessenger_user
+DB_PASSWORD=geomessenger_pass
+JWT_SECRET=change_me
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+3. Убедись, что PostgreSQL запущен и база создана, затем стартуй бэкенд:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```powershell
+npm run dev
+```
 
-## Join the community
+При старте выполняются миграции и сиды. Также создается администратор по умолчанию:
 
-Join our community of developers creating universal apps.
+- логин: Admin
+- пароль: 1234
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### 2) Приложение (Expo)
+
+1. Установи зависимости:
+
+```powershell
+cd "E:\Курсовая\TestApp"
+npm install
+```
+
+2. Запусти Expo:
+
+```powershell
+npm run start
+```
+
+Дальше:
+
+- Android: `npm run android`
+- iOS: `npm run ios`
+- Web: `npm run web`
+
+## Запуск на iOS (Expo Go)
+
+1. Запусти `npm run start`.
+2. Установи Expo Go на iPhone и отсканируй QR-код.
+3. iPhone и ПК должны быть в одной Wi-Fi сети.
+
+Примечание про VPN: VPN на ПК часто ломает доступ телефона к локальному серверу (LAN). Если с iPhone не работают запросы к API, попробуй выключить VPN на ПК или переключить Expo в режим Tunnel.
+
+## Частые проблемы
+
+### Порт 4000 занят (EADDRINUSE)
+
+Значит, уже запущен другой процесс на 4000. Найти процесс:
+
+```powershell
+Get-NetTCPConnection -LocalPort 4000 -State Listen | Format-Table -Auto
+```
+
+Дальше можно закрыть процесс через Диспетчер задач или запустить PowerShell от имени администратора и остановить по PID.
+
+### Не удается подключиться к БД
+
+Проверь:
+
+- PostgreSQL запущен
+- параметры DB_* в `backend/.env` корректные
+- база geomessenger и пользователь geomessenger_user существуют и имеют права
+
+## Структура проекта
+
+- backend/ - Node.js API + миграции и сиды
+- app/ - навигация и экраны Expo Router
+- components/ - UI-экраны и компоненты
+- assets/ - ресурсы приложения

@@ -187,7 +187,10 @@ app.get('/events/:id/comments', async (req, res) => {
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid event id' });
 
   const { rows } = await query(
-    `SELECT c.comment_id, c.text, c.created_at, u.username AS author
+    `SELECT c.comment_id,
+            CASE WHEN c.is_deleted THEN '[Комментарий удален]' ELSE c.text END AS text,
+            c.created_at,
+            u.username AS author
      FROM comments c
      JOIN users u ON u.user_id = c.user_id
      WHERE c.event_id = $1
@@ -280,15 +283,17 @@ app.delete('/comments/:id', authRequired, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid comment id' });
 
-  const { rows } = await query('SELECT user_id FROM comments WHERE comment_id = $1', [id]);
+  const { rows } = await query('SELECT user_id, is_deleted FROM comments WHERE comment_id = $1', [id]);
   const row = rows[0];
   if (!row) return res.status(404).json({ error: 'Comment not found' });
+  if (row.is_deleted) return res.json({ ok: true });
 
   const isAdmin = req.user.role === 'admin';
   const isOwner = Number(row.user_id) === Number(req.user.userId);
   if (!isAdmin && !isOwner) return res.status(403).json({ error: 'Forbidden' });
 
-  await query('DELETE FROM comments WHERE comment_id = $1', [id]);
+  // Soft-delete to avoid FK issues with reports/history.
+  await query('UPDATE comments SET is_deleted = TRUE, deleted_at = NOW() WHERE comment_id = $1', [id]);
   return res.json({ ok: true });
 });
 
@@ -385,9 +390,10 @@ app.patch('/comments/:id', authRequired, async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
 
-  const { rows } = await query('SELECT user_id FROM comments WHERE comment_id = $1', [id]);
+  const { rows } = await query('SELECT user_id, is_deleted FROM comments WHERE comment_id = $1', [id]);
   const row = rows[0];
   if (!row) return res.status(404).json({ error: 'Comment not found' });
+  if (row.is_deleted) return res.status(404).json({ error: 'Comment not found' });
 
   const isAdmin = req.user.role === 'admin';
   const isOwner = Number(row.user_id) === Number(req.user.userId);
@@ -427,9 +433,9 @@ app.post('/reports', authRequired, async (req, res) => {
       return res.status(400).json({ error: 'Cannot report your own event' });
     }
   } else {
-    const { rows } = await query('SELECT user_id FROM comments WHERE comment_id = $1', [targetId]);
+    const { rows } = await query('SELECT user_id, is_deleted FROM comments WHERE comment_id = $1', [targetId]);
     const ownerId = rows[0]?.user_id;
-    if (!ownerId) return res.status(404).json({ error: 'Comment not found' });
+    if (!ownerId || rows[0]?.is_deleted) return res.status(404).json({ error: 'Comment not found' });
     if (Number(ownerId) === Number(req.user.userId)) {
       return res.status(400).json({ error: 'Cannot report your own comment' });
     }
@@ -515,7 +521,11 @@ app.post('/admin/reports/:id/delete-target', authRequired, adminRequired, async 
       [updated.event_id],
     );
   } else if (updated.comment_id) {
-    await query('DELETE FROM comments WHERE comment_id = $1', [updated.comment_id]);
+    // Soft-delete to avoid FK issues with reports/history.
+    await query(
+      'UPDATE comments SET is_deleted = TRUE, deleted_at = NOW() WHERE comment_id = $1',
+      [updated.comment_id],
+    );
   }
 
   return res.json({ ok: true });

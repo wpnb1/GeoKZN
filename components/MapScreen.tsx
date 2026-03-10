@@ -108,35 +108,39 @@ export default function MapScreen({
           },
         ]}
       >
-        <View style={styles.headerLeft}>
-          <View style={[styles.logoBadge, { backgroundColor: theme.primary }]}>
-            <LogoMark size={22} color="#FFFFFF" accent="#FFFFFF" />
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerLeft}>
+            <View style={[styles.logoBadge, { backgroundColor: theme.primary }]}>
+              <LogoMark size={22} color="#FFFFFF" accent="#FFFFFF" />
+            </View>
+            <View style={styles.titleBlock}>
+              <Text
+                style={[styles.appTitle, { color: theme.text }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                GeoKZN
+              </Text>
+              <Text
+                style={[styles.appSubtitle, { color: theme.textSecondary }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                Карта событий Казани
+              </Text>
+            </View>
           </View>
-          <View style={styles.titleBlock}>
-            <Text style={[styles.appTitle, { color: theme.text }]}>GeoKZN</Text>
-            <Text
-              style={[styles.appSubtitle, { color: theme.textSecondary }]}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              Карта событий Казани
-            </Text>
-          </View>
-        </View>
 
-        <View style={styles.headerRight}>
           <TouchableOpacity
             style={[styles.themeButton, { backgroundColor: theme.surfaceVariant }]}
             onPress={toggleTheme}
             activeOpacity={0.7}
           >
-            <Ionicons
-              name={isDark ? 'sunny' : 'moon'}
-              size={18}
-              color={theme.text}
-            />
+            <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={theme.text} />
           </TouchableOpacity>
+        </View>
 
+        <View style={styles.headerBottomRow}>
           {currentUser ? (
             <>
               <TouchableOpacity
@@ -300,16 +304,16 @@ const createStyles = (theme: any) =>
     container: { flex: 1 },
     header: {
       paddingHorizontal: 16,
-      paddingVertical: 12,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
+      paddingTop: 12,
+      paddingBottom: 10,
+      gap: 10,
       elevation: 4,
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.1,
       shadowRadius: 8,
       borderBottomWidth: 1,
     },
+    headerTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 },
     logoBadge: {
       width: 44,
@@ -326,7 +330,7 @@ const createStyles = (theme: any) =>
     titleBlock: { flex: 1, minWidth: 0 },
     appTitle: { fontSize: 18, fontWeight: '800', letterSpacing: 0.3 },
     appSubtitle: { fontSize: 12, marginTop: 2 },
-    headerRight: { flexDirection: 'row', gap: 8, alignItems: 'center', flexShrink: 0 },
+    headerBottomRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     themeButton: {
       width: 36,
       height: 36,

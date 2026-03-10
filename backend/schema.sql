@@ -55,8 +55,16 @@ CREATE TABLE IF NOT EXISTS comments (
   event_id INTEGER NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   like_count INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ
 );
+
+-- Ensure columns exist if table was created earlier.
+ALTER TABLE comments
+  ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE comments
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_comments_event ON comments(event_id);
 CREATE INDEX IF NOT EXISTS idx_comments_user ON comments(user_id);
@@ -110,4 +118,3 @@ CREATE INDEX IF NOT EXISTS idx_reports_event ON reports(event_id);
 CREATE INDEX IF NOT EXISTS idx_reports_comment ON reports(comment_id);
 
 COMMIT;
-

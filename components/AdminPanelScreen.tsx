@@ -7,8 +7,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import MapView, { Marker, Region } from 'react-native-maps';
 
-import { KAZAN_CENTER } from '@/constants/map';
+import { KAZAN_BOUNDS, KAZAN_CENTER } from '@/constants/map';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Complaint, Event, EventWithArchive } from '@/types/models';
 
@@ -28,6 +29,29 @@ type Props = {
 
 type Tab = 'create' | 'complaints' | 'archive';
 
+function clampRegion(region: Region): Region {
+  let { latitude, longitude, latitudeDelta, longitudeDelta } = region;
+
+  if (latitude < KAZAN_BOUNDS.minLat) latitude = KAZAN_BOUNDS.minLat;
+  else if (latitude > KAZAN_BOUNDS.maxLat) latitude = KAZAN_BOUNDS.maxLat;
+
+  if (longitude < KAZAN_BOUNDS.minLng) longitude = KAZAN_BOUNDS.minLng;
+  else if (longitude > KAZAN_BOUNDS.maxLng) longitude = KAZAN_BOUNDS.maxLng;
+
+  const maxDelta = 0.6;
+  latitudeDelta = Math.min(latitudeDelta, maxDelta);
+  longitudeDelta = Math.min(longitudeDelta, maxDelta);
+
+  return { latitude, longitude, latitudeDelta, longitudeDelta };
+}
+
+function clampCoord(coord: { latitude: number; longitude: number }) {
+  return {
+    latitude: Math.min(Math.max(coord.latitude, KAZAN_BOUNDS.minLat), KAZAN_BOUNDS.maxLat),
+    longitude: Math.min(Math.max(coord.longitude, KAZAN_BOUNDS.minLng), KAZAN_BOUNDS.maxLng),
+  };
+}
+
 export default function AdminPanelScreen({
   complaints,
   events,
@@ -45,6 +69,11 @@ export default function AdminPanelScreen({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [endTime, setEndTime] = useState('');
+
+  const [region, setRegion] = useState<Region>(KAZAN_CENTER);
+  const [selectedCoord, setSelectedCoord] = useState<{ latitude: number; longitude: number }>(() =>
+    clampCoord({ latitude: KAZAN_CENTER.latitude, longitude: KAZAN_CENTER.longitude }),
+  );
 
   const pendingComplaints = useMemo(() => complaints, [complaints]);
 
@@ -71,8 +100,8 @@ export default function AdminPanelScreen({
       type: 'official',
       title: t,
       description: d,
-      lat: KAZAN_CENTER.latitude,
-      lng: KAZAN_CENTER.longitude,
+      lat: selectedCoord.latitude,
+      lng: selectedCoord.longitude,
       endTime: parsedEnd,
       isAdminEvent: true,
     } as any);
@@ -80,6 +109,15 @@ export default function AdminPanelScreen({
     setTitle('');
     setDescription('');
     setEndTime('');
+  };
+
+  const handleMapPress = (e: any) => {
+    const coord = e?.nativeEvent?.coordinate;
+    if (!coord) return;
+    const lat = Number(coord.latitude);
+    const lng = Number(coord.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setSelectedCoord(clampCoord({ latitude: lat, longitude: lng }));
   };
 
   const TabButton = ({ value, label }: { value: Tab; label: string }) => {
@@ -175,6 +213,33 @@ export default function AdminPanelScreen({
                 autoCapitalize="none"
               />
               <Text style={[styles.hint, { color: theme.textDisabled }]}>Это время нужно для автоархивации официального события.</Text>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={[styles.label, { color: theme.textSecondary }]}>Локация на карте</Text>
+              <View
+                style={[
+                  styles.mapContainer,
+                  { backgroundColor: theme.surfaceVariant, borderColor: theme.border, shadowColor: theme.shadow },
+                ]}
+              >
+                <MapView
+                  style={styles.map}
+                  region={region}
+                  onRegionChangeComplete={(r) => setRegion(clampRegion(r))}
+                  onPress={handleMapPress}
+                >
+                  <Marker coordinate={selectedCoord} />
+                </MapView>
+              </View>
+              <View style={[styles.coordsBox, { backgroundColor: theme.surfaceVariant }]}>
+                <Text style={[styles.coordsText, { color: theme.textSecondary }]}>
+                  Координаты: {selectedCoord.latitude.toFixed(4)}, {selectedCoord.longitude.toFixed(4)}
+                </Text>
+              </View>
+              <Text style={[styles.hint, { color: theme.textDisabled }]}>
+                Нажми на карту, чтобы выбрать точку.
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -346,6 +411,19 @@ const createStyles = (theme: any) =>
       fontSize: 16,
     },
     textArea: { height: 100, textAlignVertical: 'top' },
+    mapContainer: {
+      borderRadius: 16,
+      overflow: 'hidden',
+      borderWidth: 2,
+      marginBottom: 10,
+      elevation: 2,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+    },
+    map: { height: 220 },
+    coordsBox: { borderRadius: 10, padding: 12 },
+    coordsText: { fontSize: 13, fontWeight: '700' },
     primaryButton: {
       borderRadius: 12,
       paddingVertical: 16,

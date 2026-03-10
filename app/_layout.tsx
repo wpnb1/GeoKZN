@@ -399,29 +399,52 @@ function AppContent() {
   };
 
   const createEventBestEffort = async (
-    data: Omit<
-      Event,
-      | 'id'
-      | 'author'
-      | 'createdAt'
-      | 'endTime'
-      | 'isAdminEvent'
-      | 'archivedManually'
-    >,
+    data: {
+      type: Event['type'];
+      title: string;
+      description: string;
+      lat: number;
+      lng: number;
+      endTime?: Date | null;
+    },
   ) => {
     try {
       if (!token) throw new Error('Login required');
-      await apiRequest('/events', {
-        token,
-        method: 'POST',
-        body: {
-          type: data.type,
-          title: data.title,
-          description: data.description,
-          latitude: data.lat,
-          longitude: data.lng,
-        },
-      });
+
+      if (data.type === 'official') {
+        if (!currentUser?.isAdmin) {
+          Alert.alert('Недоступно', 'Официальные события может создавать только администратор.');
+          return;
+        }
+        if (!data.endTime) {
+          Alert.alert('Некорректно', 'Для официального события требуется дата окончания.');
+          return;
+        }
+        await apiRequest('/admin/events', {
+          token,
+          method: 'POST',
+          body: {
+            type: 'official',
+            title: data.title,
+            description: data.description,
+            latitude: data.lat,
+            longitude: data.lng,
+            expiresAt: data.endTime.toISOString(),
+          },
+        });
+      } else {
+        await apiRequest('/events', {
+          token,
+          method: 'POST',
+          body: {
+            type: data.type,
+            title: data.title,
+            description: data.description,
+            latitude: data.lat,
+            longitude: data.lng,
+          },
+        });
+      }
       await loadEvents();
       setCurrentScreen('map');
     } catch (e: any) {
@@ -438,6 +461,7 @@ function AppContent() {
       description: string;
       lat: number;
       lng: number;
+      endTime?: Date | null;
     },
   ) => {
     const idNum = Number(eventId);
@@ -457,6 +481,7 @@ function AppContent() {
           description: data.description,
           latitude: data.lat,
           longitude: data.lng,
+          expiresAt: data.type === 'official' ? (data.endTime ? data.endTime.toISOString() : undefined) : undefined,
         },
       });
       await loadEvents();

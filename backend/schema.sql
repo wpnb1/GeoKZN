@@ -9,11 +9,16 @@ CREATE TABLE IF NOT EXISTS users (
   role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   password_hash VARCHAR(255) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  is_blocked BOOLEAN NOT NULL DEFAULT FALSE
+  is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+  avatar_emoji VARCHAR(16)
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_is_blocked ON users(is_blocked);
+
+-- Ensure column exists if table was created earlier.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS avatar_emoji VARCHAR(16);
 
 CREATE TABLE IF NOT EXISTS event_types (
   type_id SERIAL PRIMARY KEY,

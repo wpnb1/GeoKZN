@@ -1,10 +1,12 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const { z } = require('zod');
+const { WebSocketServer } = require('ws');
 
 const { query } = require('./db');
 const { signToken, authRequired, adminRequired } = require('./auth');
@@ -12,6 +14,68 @@ const { signToken, authRequired, adminRequired } = require('./auth');
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(cors());
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+const EVENT_DESCRIPTION_MAX_LENGTH = 500;
+const CHAT_SPAM_WINDOW_MS = 12 * 1000;
+const CHAT_SPAM_MAX_MESSAGES = 4;
+const CHAT_MUTE_MS = 40 * 1000;
+const chatSpamState = new Map();
+
+function broadcast(payload) {
+  const message = JSON.stringify(payload);
+  for (const client of wss.clients) {
+    if (client.readyState === client.OPEN) {
+      client.send(message);
+    }
+  }
+}
+
+function getChatSpamState(userId) {
+  const existing = chatSpamState.get(userId);
+  if (existing) return existing;
+
+  const created = { timestamps: [], muteUntil: 0 };
+  chatSpamState.set(userId, created);
+  return created;
+}
+
+function checkChatMute(userId) {
+  const state = getChatSpamState(userId);
+  const now = Date.now();
+
+  if (state.muteUntil > now) {
+    return { muted: true, muteUntil: state.muteUntil };
+  }
+
+  if (state.muteUntil !== 0) {
+    state.muteUntil = 0;
+  }
+
+  state.timestamps = state.timestamps.filter((ts) => now - ts <= CHAT_SPAM_WINDOW_MS);
+  return { muted: false, muteUntil: 0 };
+}
+
+function registerChatMessage(userId) {
+  const state = getChatSpamState(userId);
+  const now = Date.now();
+
+  state.timestamps = state.timestamps.filter((ts) => now - ts <= CHAT_SPAM_WINDOW_MS);
+  state.timestamps.push(now);
+
+  if (state.timestamps.length > CHAT_SPAM_MAX_MESSAGES) {
+    state.timestamps = [];
+    state.muteUntil = now + CHAT_MUTE_MS;
+    return { muted: true, muteUntil: state.muteUntil };
+  }
+
+  return { muted: false, muteUntil: 0 };
+}
+
+wss.on('connection', (socket) => {
+  socket.send(JSON.stringify({ type: 'connection:ready' }));
+});
 
 // ---------- Helpers ----------
 
@@ -26,8 +90,48 @@ function mapUserRow(row) {
     username: row.username,
     role: row.role,
     isBlocked: row.is_blocked,
+    avatarEmoji: row.avatar_emoji ?? null,
     createdAt: row.created_at,
   };
+}
+
+async function getActiveUserBlock(userId) {
+  const { rows } = await query(
+    `SELECT block_id, unblock_at
+     FROM user_blocks
+     WHERE user_id = $1
+       AND is_active = TRUE
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+async function releaseExpiredBlocksForUser(userId) {
+  await query(
+    `UPDATE user_blocks
+     SET is_active = FALSE
+     WHERE user_id = $1
+       AND is_active = TRUE
+       AND unblock_at IS NOT NULL
+       AND unblock_at <= NOW()`,
+    [userId],
+  );
+
+  await query(
+    `UPDATE users u
+     SET is_blocked = FALSE
+     WHERE u.user_id = $1
+       AND u.is_blocked = TRUE
+       AND NOT EXISTS (
+         SELECT 1
+         FROM user_blocks ub
+         WHERE ub.user_id = u.user_id
+           AND ub.is_active = TRUE
+       )`,
+    [userId],
+  );
 }
 
 async function ensureDefaultAdmin() {
@@ -68,7 +172,7 @@ app.post('/auth/register', async (req, res) => {
     const { rows } = await query(
       `INSERT INTO users (username, email, password_hash, role)
        VALUES ($1, $2, $3, $4)
-       RETURNING user_id, username, role, is_blocked, created_at`,
+       RETURNING user_id, username, role, is_blocked, avatar_emoji, created_at`,
       [username, email ?? null, passwordHash, role],
     );
 
@@ -93,7 +197,7 @@ app.post('/auth/login', async (req, res) => {
 
   const { username, password } = parsed.data;
   const { rows } = await query(
-    'SELECT user_id, username, role, is_blocked, created_at, password_hash FROM users WHERE username = $1',
+    'SELECT user_id, username, role, is_blocked, avatar_emoji, created_at, password_hash FROM users WHERE username = $1',
     [username],
   );
 
@@ -102,7 +206,34 @@ app.post('/auth/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
   if (row.is_blocked) {
-    return res.status(403).json({ error: 'User is blocked' });
+    await releaseExpiredBlocksForUser(row.user_id);
+
+    const { rows: refreshedRows } = await query(
+      'SELECT user_id, username, role, is_blocked, avatar_emoji, created_at, password_hash FROM users WHERE user_id = $1',
+      [row.user_id],
+    );
+    const refreshed = refreshedRows[0];
+    if (!refreshed) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (refreshed.is_blocked) {
+      const activeBlock = await getActiveUserBlock(refreshed.user_id);
+      return res.status(403).json({
+        error: 'User is blocked',
+        unblockAt: activeBlock?.unblock_at ?? null,
+        isTemporary: Boolean(activeBlock?.unblock_at),
+      });
+    }
+
+    const okAfterRelease = await bcrypt.compare(password, refreshed.password_hash);
+    if (!okAfterRelease) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = mapUserRow(refreshed);
+    const token = signToken({ userId: user.userId, role: user.role, username: user.username });
+    return res.json({ token, user });
   }
 
   const ok = await bcrypt.compare(password, row.password_hash);
@@ -113,6 +244,78 @@ app.post('/auth/login', async (req, res) => {
   const user = mapUserRow(row);
   const token = signToken({ userId: user.userId, role: user.role, username: user.username });
   return res.json({ token, user });
+});
+
+// ---------- Profile ----------
+
+app.get('/me', authRequired, async (req, res) => {
+  const { rows } = await query(
+    `SELECT user_id, username, role, is_blocked, avatar_emoji, created_at
+     FROM users
+     WHERE user_id = $1`,
+    [req.user.userId],
+  );
+  const row = rows[0];
+  if (!row) return res.status(404).json({ error: 'User not found' });
+  return res.json({ user: mapUserRow(row) });
+});
+
+app.patch('/me', authRequired, async (req, res) => {
+  const schema = z.object({
+    username: z.string().min(3).max(50).optional(),
+    avatarEmoji: z.string().max(16).nullable().optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+  }
+
+  const { username, avatarEmoji } = parsed.data;
+  if (username !== undefined) {
+    const uname = username.trim();
+    if (!uname) return res.status(400).json({ error: 'Invalid username' });
+    try {
+      await query('UPDATE users SET username = $2 WHERE user_id = $1', [req.user.userId, uname]);
+    } catch {
+      return res.status(409).json({ error: 'Username already exists' });
+    }
+  }
+
+  if (avatarEmoji !== undefined) {
+    const value = avatarEmoji === null ? null : String(avatarEmoji).trim();
+    await query('UPDATE users SET avatar_emoji = $2 WHERE user_id = $1', [req.user.userId, value || null]);
+  }
+
+  const { rows } = await query(
+    `SELECT user_id, username, role, is_blocked, avatar_emoji, created_at
+     FROM users
+     WHERE user_id = $1`,
+    [req.user.userId],
+  );
+  return res.json({ user: mapUserRow(rows[0]) });
+});
+
+app.patch('/me/password', authRequired, async (req, res) => {
+  const schema = z.object({
+    currentPassword: z.string().min(1).max(200),
+    newPassword: z.string().min(4).max(200),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+  }
+
+  const { currentPassword, newPassword } = parsed.data;
+  const { rows } = await query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.userId]);
+  const row = rows[0];
+  if (!row) return res.status(404).json({ error: 'User not found' });
+
+  const ok = await bcrypt.compare(currentPassword, row.password_hash);
+  if (!ok) return res.status(401).json({ error: 'Invalid current password' });
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await query('UPDATE users SET password_hash = $2 WHERE user_id = $1', [req.user.userId, passwordHash]);
+  return res.json({ ok: true });
 });
 
 // ---------- Public data ----------
@@ -188,12 +391,13 @@ app.get('/events/:id/comments', async (req, res) => {
 
   const { rows } = await query(
     `SELECT c.comment_id,
-            CASE WHEN c.is_deleted THEN '[Комментарий удален]' ELSE c.text END AS text,
+            c.text AS text,
             c.created_at,
             u.username AS author
      FROM comments c
      JOIN users u ON u.user_id = c.user_id
      WHERE c.event_id = $1
+       AND c.is_deleted = FALSE
      ORDER BY c.created_at ASC
      LIMIT 1000`,
     [id],
@@ -207,7 +411,7 @@ app.post('/events', authRequired, async (req, res) => {
   const schema = z.object({
     type: z.string().min(1).max(50),
     title: z.string().min(1).max(100),
-    description: z.string().max(5000).optional(),
+    description: z.string().max(EVENT_DESCRIPTION_MAX_LENGTH).optional(),
     latitude: z.number(),
     longitude: z.number(),
     address: z.string().max(255).optional(),
@@ -232,6 +436,7 @@ app.post('/events', authRequired, async (req, res) => {
     [req.user.userId, typeId, title, description ?? null, latitude, longitude, address ?? null],
   );
 
+  broadcast({ type: 'events:changed' });
   return res.json({ eventId: rows[0].event_id, createdAt: rows[0].created_at });
 });
 
@@ -247,12 +452,29 @@ app.post('/events/:id/comments', authRequired, async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
 
+  const muteState = checkChatMute(req.user.userId);
+  if (muteState.muted) {
+    return res.status(429).json({
+      error: 'Chat temporarily muted',
+      muteUntil: new Date(muteState.muteUntil).toISOString(),
+    });
+  }
+
+  const spamState = registerChatMessage(req.user.userId);
+  if (spamState.muted) {
+    return res.status(429).json({
+      error: 'Chat temporarily muted',
+      muteUntil: new Date(spamState.muteUntil).toISOString(),
+    });
+  }
+
   const { rows } = await query(
     `INSERT INTO comments (user_id, event_id, text)
      VALUES ($1, $2, $3)
      RETURNING comment_id, created_at`,
     [req.user.userId, id, parsed.data.text],
   );
+  broadcast({ type: 'comments:changed', eventId: id });
   return res.json({ commentId: rows[0].comment_id, createdAt: rows[0].created_at });
 });
 
@@ -276,6 +498,7 @@ app.delete('/events/:id', authRequired, async (req, res) => {
      WHERE event_id = $1`,
     [id],
   );
+  broadcast({ type: 'events:changed' });
   return res.json({ ok: true });
 });
 
@@ -283,7 +506,7 @@ app.delete('/comments/:id', authRequired, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid comment id' });
 
-  const { rows } = await query('SELECT user_id, is_deleted FROM comments WHERE comment_id = $1', [id]);
+  const { rows } = await query('SELECT user_id, event_id, is_deleted FROM comments WHERE comment_id = $1', [id]);
   const row = rows[0];
   if (!row) return res.status(404).json({ error: 'Comment not found' });
   if (row.is_deleted) return res.json({ ok: true });
@@ -294,6 +517,7 @@ app.delete('/comments/:id', authRequired, async (req, res) => {
 
   // Soft-delete to avoid FK issues with reports/history.
   await query('UPDATE comments SET is_deleted = TRUE, deleted_at = NOW() WHERE comment_id = $1', [id]);
+  broadcast({ type: 'comments:changed', eventId: row.event_id });
   return res.json({ ok: true });
 });
 
@@ -304,7 +528,7 @@ app.patch('/events/:id', authRequired, async (req, res) => {
   const schema = z.object({
     type: z.string().min(1).max(50).optional(),
     title: z.string().min(1).max(100).optional(),
-    description: z.string().max(5000).optional(),
+    description: z.string().max(EVENT_DESCRIPTION_MAX_LENGTH).optional(),
     latitude: z.number().optional(),
     longitude: z.number().optional(),
     address: z.string().max(255).optional(),
@@ -375,6 +599,7 @@ app.patch('/events/:id', authRequired, async (req, res) => {
   );
 
   if (updatedRows.length === 0) return res.status(404).json({ error: 'Event not found' });
+  broadcast({ type: 'events:changed' });
   return res.json({ ok: true });
 });
 
@@ -390,7 +615,7 @@ app.patch('/comments/:id', authRequired, async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
 
-  const { rows } = await query('SELECT user_id, is_deleted FROM comments WHERE comment_id = $1', [id]);
+  const { rows } = await query('SELECT user_id, event_id, is_deleted FROM comments WHERE comment_id = $1', [id]);
   const row = rows[0];
   if (!row) return res.status(404).json({ error: 'Comment not found' });
   if (row.is_deleted) return res.status(404).json({ error: 'Comment not found' });
@@ -400,6 +625,7 @@ app.patch('/comments/:id', authRequired, async (req, res) => {
   if (!isAdmin && !isOwner) return res.status(403).json({ error: 'Forbidden' });
 
   await query('UPDATE comments SET text = $2 WHERE comment_id = $1', [id, parsed.data.text]);
+  broadcast({ type: 'comments:changed', eventId: row.event_id });
   return res.json({ ok: true });
 });
 
@@ -454,17 +680,26 @@ app.post('/reports', authRequired, async (req, res) => {
 
 app.get('/admin/reports', authRequired, adminRequired, async (_req, res) => {
   const { rows } = await query(
-    `SELECT r.report_id, r.status, r.created_at, r.description,
+    `SELECT r.report_id, r.status, r.created_at,
+            r.description AS report_note,
             rr.name AS reason,
             u.username AS reporter,
             r.event_id, r.comment_id,
             COALESCE(e.user_id, c.user_id) AS target_user_id,
-            COALESCE(ue.username, uc.username) AS target_username
+            COALESCE(ue.username, uc.username) AS target_username,
+            e.title AS event_title,
+            e.description AS event_description,
+            et.name AS event_type,
+            c.text AS comment_text,
+            ce.event_id AS comment_event_id,
+            ce.title AS comment_event_title
      FROM reports r
      JOIN report_reasons rr ON rr.reason_id = r.reason_id
      JOIN users u ON u.user_id = r.reporter_id
      LEFT JOIN events e ON e.event_id = r.event_id
      LEFT JOIN comments c ON c.comment_id = r.comment_id
+     LEFT JOIN events ce ON ce.event_id = c.event_id
+     LEFT JOIN event_types et ON et.type_id = e.type_id
      LEFT JOIN users ue ON ue.user_id = e.user_id
      LEFT JOIN users uc ON uc.user_id = c.user_id
      WHERE r.status = 'pending'
@@ -520,12 +755,15 @@ app.post('/admin/reports/:id/delete-target', authRequired, adminRequired, async 
        WHERE event_id = $1`,
       [updated.event_id],
     );
+    broadcast({ type: 'events:changed' });
   } else if (updated.comment_id) {
     // Soft-delete to avoid FK issues with reports/history.
+    const { rows: commentRows } = await query('SELECT event_id FROM comments WHERE comment_id = $1', [updated.comment_id]);
     await query(
       'UPDATE comments SET is_deleted = TRUE, deleted_at = NOW() WHERE comment_id = $1',
       [updated.comment_id],
     );
+    broadcast({ type: 'comments:changed', eventId: commentRows[0]?.event_id ?? null });
   }
 
   return res.json({ ok: true });
@@ -541,12 +779,99 @@ app.post('/admin/reports/:id/block-target', authRequired, adminRequired, async (
   const targetUserId = await getReportTargetOwner(updated);
   if (!targetUserId) return res.status(404).json({ error: 'Target not found' });
 
+  if (Number(targetUserId) === Number(req.user.userId)) {
+    return res.status(400).json({ error: 'Cannot block yourself' });
+  }
+
   await query('UPDATE users SET is_blocked = TRUE WHERE user_id = $1', [targetUserId]);
+  await query(`UPDATE user_blocks SET is_active = FALSE WHERE user_id = $1 AND is_active = TRUE`, [targetUserId]);
   await query(
-    `INSERT INTO user_blocks (user_id, blocked_by, reason, is_active)
-     VALUES ($1, $2, $3, TRUE)`,
+    `INSERT INTO user_blocks (user_id, blocked_by, reason, is_active, unblock_at)
+     VALUES ($1, $2, $3, TRUE, NULL)`,
     [targetUserId, req.user.userId, `Blocked via report ${id}`],
   );
+
+  return res.json({ ok: true });
+});
+
+// ---------- Admin users ----------
+
+app.get('/admin/users', authRequired, adminRequired, async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const params = [];
+  let where = '';
+  if (q) {
+    where = 'WHERE username ILIKE $1';
+    params.push(`%${q}%`);
+  }
+
+  const { rows } = await query(
+    `SELECT user_id, username, role, is_blocked, created_at
+     FROM users
+     ${where}
+     ORDER BY username ASC
+     LIMIT 200`,
+    params,
+  );
+
+  return res.json({
+    items: rows.map((row) => ({
+      userId: row.user_id,
+      username: row.username,
+      isAdmin: row.role === 'admin',
+      isBlocked: row.is_blocked,
+      createdAt: row.created_at,
+    })),
+  });
+});
+
+app.post('/admin/users/:id/block', authRequired, adminRequired, async (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user id' });
+
+  if (Number(targetId) === Number(req.user.userId)) {
+    return res.status(400).json({ error: 'Cannot block yourself' });
+  }
+
+  const { rows: userRows } = await query('SELECT user_id FROM users WHERE user_id = $1', [targetId]);
+  if (userRows.length === 0) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const schema = z.object({
+    durationMinutes: z.number().int().min(0).nullable().optional(),
+  });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+  }
+
+  const minutes = parsed.data.durationMinutes;
+  const unblockAt =
+    minutes != null && minutes > 0 ? new Date(Date.now() + minutes * 60 * 1000) : null;
+
+  await query('UPDATE users SET is_blocked = TRUE WHERE user_id = $1', [targetId]);
+  await query(`UPDATE user_blocks SET is_active = FALSE WHERE user_id = $1 AND is_active = TRUE`, [targetId]);
+  await query(
+    `INSERT INTO user_blocks (user_id, blocked_by, reason, is_active, unblock_at)
+     VALUES ($1, $2, $3, TRUE, $4)`,
+    [targetId, req.user.userId, 'Blocked by admin', unblockAt],
+  );
+
+  return res.json({ ok: true });
+});
+
+app.post('/admin/users/:id/unblock', authRequired, adminRequired, async (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user id' });
+
+  const { rows: userRows } = await query('SELECT user_id FROM users WHERE user_id = $1', [targetId]);
+  if (userRows.length === 0) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  await query('UPDATE users SET is_blocked = FALSE WHERE user_id = $1', [targetId]);
+  await query(`UPDATE user_blocks SET is_active = FALSE WHERE user_id = $1 AND is_active = TRUE`, [targetId]);
 
   return res.json({ ok: true });
 });
@@ -561,6 +886,7 @@ app.post('/admin/events/:id/archive', authRequired, adminRequired, async (req, r
      WHERE event_id = $1`,
     [id],
   );
+  broadcast({ type: 'events:changed' });
   return res.json({ ok: true });
 });
 
@@ -568,7 +894,7 @@ app.post('/admin/events', authRequired, adminRequired, async (req, res) => {
   const schema = z.object({
     type: z.string().min(1).max(50).default('official'),
     title: z.string().min(1).max(100),
-    description: z.string().max(5000).optional(),
+    description: z.string().max(EVENT_DESCRIPTION_MAX_LENGTH).optional(),
     latitude: z.number(),
     longitude: z.number(),
     address: z.string().max(255).optional(),
@@ -596,13 +922,39 @@ app.post('/admin/events', authRequired, adminRequired, async (req, res) => {
     [req.user.userId, typeId, title, description ?? null, latitude, longitude, address ?? null, expires],
   );
 
+  broadcast({ type: 'events:changed' });
   return res.json({ eventId: rows[0].event_id, createdAt: rows[0].created_at });
 });
+
+// Снятие временных блокировок по истечении unblock_at
+async function expireBlocksTick() {
+  try {
+    await query(
+      `UPDATE user_blocks
+       SET is_active = FALSE
+       WHERE is_active = TRUE
+         AND unblock_at IS NOT NULL
+         AND unblock_at <= NOW()`,
+    );
+
+    await query(
+      `UPDATE users u
+       SET is_blocked = FALSE
+       WHERE u.is_blocked = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks ub
+           WHERE ub.user_id = u.user_id AND ub.is_active = TRUE
+         )`,
+    );
+  } catch (e) {
+    console.error('expireBlocksTick failed', e);
+  }
+}
 
 // Auto-archive: user events after 5 hours (runs on interval)
 async function autoArchiveTick() {
   try {
-    await query(
+    const userEventsResult = await query(
       `UPDATE events e
        SET is_archived = TRUE, archived_at = NOW()
        FROM event_types et
@@ -612,19 +964,24 @@ async function autoArchiveTick() {
          AND et.name <> 'official'`,
     );
 
-    await query(
+    const expiringEventsResult = await query(
       `UPDATE events
        SET is_archived = TRUE, archived_at = NOW()
        WHERE is_archived = FALSE
          AND expires_at IS NOT NULL
          AND expires_at <= NOW()`,
     );
+
+    if ((userEventsResult.rowCount ?? 0) > 0 || (expiringEventsResult.rowCount ?? 0) > 0) {
+      broadcast({ type: 'events:changed' });
+    }
   } catch (e) {
     // keep server alive
     console.error('autoArchiveTick failed', e);
   }
 }
 
+setInterval(expireBlocksTick, 60 * 1000);
 setInterval(autoArchiveTick, 5 * 60 * 1000);
 
 const port = Number(process.env.PORT || 4000);
@@ -635,7 +992,7 @@ async function start() {
 
   await ensureDefaultAdmin();
 
-  app.listen(port, () => {
+  server.listen(port, () => {
     console.log(`API listening on :${port}`);
   });
 }

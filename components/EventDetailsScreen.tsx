@@ -170,7 +170,9 @@ export default function EventDetailsScreen({
               },
             ]}
           >
-            <Text style={[styles.descriptionText, { color: theme.text }]}>{event.description}</Text>
+            <Text style={[styles.descriptionText, { color: theme.text }]}>
+              {event.description?.trim() ? event.description : 'Описание отсутствует.'}
+            </Text>
           </View>
 
           {currentUser ? (

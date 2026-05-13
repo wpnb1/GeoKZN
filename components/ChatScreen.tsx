@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -19,7 +20,7 @@ type Props = {
   comments: Comment[];
   currentUser: User | null;
   onBack: () => void;
-  onAddComment: (eventId: string, text: string) => void;
+  onAddComment: (eventId: string, text: string) => Promise<boolean>;
   onComplaint: (commentId: string, reason: string) => void;
   onDeleteComment: (commentId: string) => void;
   onEditComment: (commentId: string, text: string) => void;
@@ -37,14 +38,22 @@ export default function ChatScreen({
 }: Props) {
   const { theme } = useTheme();
   const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
 
-  const handleSend = () => {
-    if (!text.trim() || !currentUser) return;
-    onAddComment(event.id, text.trim());
-    setText('');
+  const handleSend = async () => {
+    if (!text.trim() || !currentUser || sending) return;
+    setSending(true);
+    try {
+      const ok = await onAddComment(event.id, text.trim());
+      if (ok) {
+        setText('');
+      }
+    } finally {
+      setSending(false);
+    }
   };
 
   const formatTime = (date: Date) =>
@@ -116,7 +125,12 @@ export default function ChatScreen({
             {canDelete && !isEditing && (
               <TouchableOpacity
                 style={[styles.actionButton, { borderColor: theme.error }]}
-                onPress={() => onDeleteComment(item.id)}
+                onPress={() => {
+                  Alert.alert('Удалить комментарий?', 'Точно хотите удалить этот комментарий?', [
+                    { text: 'Отмена', style: 'cancel' },
+                    { text: 'Удалить', style: 'destructive', onPress: () => onDeleteComment(item.id) },
+                  ]);
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="trash" size={14} color={theme.error} />
@@ -247,9 +261,9 @@ export default function ChatScreen({
             multiline
           />
           <TouchableOpacity
-            style={[styles.sendButton, { backgroundColor: theme.primary, opacity: text.trim() ? 1 : 0.6 }]}
+            style={[styles.sendButton, { backgroundColor: theme.primary, opacity: text.trim() && !sending ? 1 : 0.6 }]}
             onPress={handleSend}
-            disabled={!text.trim()}
+            disabled={!text.trim() || sending}
             activeOpacity={0.8}
           >
             <Ionicons name="send" size={18} color="#FFFFFF" />

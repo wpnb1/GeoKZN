@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
+  Modal,
   StyleSheet,
   Switch,
   Text,
@@ -11,7 +12,12 @@ import MapView, { Marker, Region } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 
 import LogoMark from '@/components/LogoMark';
-import { KAZAN_BOUNDS, KAZAN_CENTER } from '@/constants/map';
+import {
+  KAZAN_BOUNDS,
+  KAZAN_CENTER,
+  KAZAN_MIN_ZOOM_LEVEL,
+  LOCALITY_NOTICE_SHORT,
+} from '@/constants/map';
 import { useTheme } from '@/contexts/ThemeContext';
 import { EventType, EventWithArchive, User } from '@/types/models';
 
@@ -34,6 +40,12 @@ const eventTypeConfig: Record<EventType, { label: string; color: string }> = {
   official: { label: 'Офиц.', color: '#8e24aa' },
   other: { label: 'Другое', color: '#757575' },
 };
+
+const CLUSTER_DELTA_THRESHOLD = 0.072;
+
+type MarkerItem =
+  | { kind: 'single'; event: EventWithArchive }
+  | { kind: 'cluster'; key: string; events: EventWithArchive[]; lat: number; lng: number };
 
 function clampRegion(region: Region): Region {
   let { latitude, longitude, latitudeDelta, longitudeDelta } = region;
@@ -89,6 +101,33 @@ export default function MapScreen({
       return true;
     });
   }, [events, filters, effectiveShowArchived]);
+
+  const [clusterPick, setClusterPick] = useState<EventWithArchive[] | null>(null);
+
+  const markerItems = useMemo((): MarkerItem[] => {
+    const clusterMode = region.latitudeDelta > CLUSTER_DELTA_THRESHOLD;
+    if (!clusterMode) {
+      return filteredEvents.map((event) => ({ kind: 'single' as const, event }));
+    }
+    const groups = new Map<string, EventWithArchive[]>();
+    for (const e of filteredEvents) {
+      const key = `${e.lat.toFixed(3)}_${e.lng.toFixed(3)}`;
+      const arr = groups.get(key) ?? [];
+      arr.push(e);
+      groups.set(key, arr);
+    }
+    const out: MarkerItem[] = [];
+    for (const [, items] of groups) {
+      if (items.length === 1) {
+        out.push({ kind: 'single', event: items[0] });
+      } else {
+        const lat = items.reduce((s, x) => s + x.lat, 0) / items.length;
+        const lng = items.reduce((s, x) => s + x.lng, 0) / items.length;
+        out.push({ kind: 'cluster', key: `${lat.toFixed(4)}_${lng.toFixed(4)}`, events: items, lat, lng });
+      }
+    }
+    return out;
+  }, [filteredEvents, region.latitudeDelta]);
 
   const toggleFilter = (type: EventType) => {
     setFilters((prev) => ({ ...prev, [type]: !prev[type] }));
@@ -181,9 +220,15 @@ export default function MapScreen({
         </View>
       </View>
 
+      <View style={[styles.localityBanner, { backgroundColor: theme.surfaceVariant, borderColor: theme.border }]}>
+        <Ionicons name="information-circle-outline" size={18} color={theme.primary} style={{ marginRight: 8 }} />
+        <Text style={[styles.localityText, { color: theme.textSecondary }]}>{LOCALITY_NOTICE_SHORT}</Text>
+      </View>
+
       <MapView
         style={styles.map}
         region={region}
+        minZoomLevel={KAZAN_MIN_ZOOM_LEVEL}
         onRegionChangeComplete={(r) => setRegion(clampRegion(r))}
         onLongPress={(e) => {
           const coord = (e as any)?.nativeEvent?.coordinate;
@@ -192,29 +237,91 @@ export default function MapScreen({
           }
         }}
       >
-        {filteredEvents.map((event) => {
-          const cfg = eventTypeConfig[event.type] || eventTypeConfig.other;
-          const archivedOpacity = event.isArchived ? 0.5 : 1;
+        {markerItems.map((item) => {
+          if (item.kind === 'single') {
+            const event = item.event;
+            const cfg = eventTypeConfig[event.type] || eventTypeConfig.other;
+            const archivedOpacity = event.isArchived ? 0.5 : 1;
+            return (
+              <Marker
+                key={event.id}
+                coordinate={{ latitude: event.lat, longitude: event.lng }}
+                title={event.title}
+                description={event.description}
+                onPress={() => onEventClick(event)}
+              >
+                <View
+                  style={[
+                    styles.markerCircle,
+                    { backgroundColor: cfg.color, opacity: archivedOpacity },
+                  ]}
+                >
+                  <Text style={styles.markerText}>{cfg.label[0] ?? '•'}</Text>
+                </View>
+              </Marker>
+            );
+          }
+          const n = item.events.length;
           return (
             <Marker
-              key={event.id}
-              coordinate={{ latitude: event.lat, longitude: event.lng }}
-              title={event.title}
-              description={event.description}
-              onPress={() => onEventClick(event)}
+              key={item.key}
+              coordinate={{ latitude: item.lat, longitude: item.lng }}
+              onPress={() => setClusterPick(item.events)}
             >
-              <View
-                style={[
-                  styles.markerCircle,
-                  { backgroundColor: cfg.color, opacity: archivedOpacity },
-                ]}
-              >
-                <Text style={styles.markerText}>{cfg.label[0] ?? '•'}</Text>
+              <View style={[styles.clusterBubble, { backgroundColor: theme.primary, borderColor: theme.surface }]}>
+                <Text style={styles.clusterBubbleText}>{n}</Text>
               </View>
             </Marker>
           );
         })}
       </MapView>
+
+      <Modal visible={clusterPick != null} transparent animationType="fade" onRequestClose={() => setClusterPick(null)}>
+        <View style={styles.modalWrap}>
+          <TouchableOpacity
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.45)' }]}
+            activeOpacity={1}
+            onPress={() => setClusterPick(null)}
+          />
+          <View style={[styles.modalSheet, { backgroundColor: theme.surface }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>События в этой точке</Text>
+            <FlatList
+              data={clusterPick ?? []}
+              keyExtractor={(e) => e.id}
+              style={{ maxHeight: 360 }}
+              renderItem={({ item }) => {
+                const cfg = eventTypeConfig[item.type] || eventTypeConfig.other;
+                return (
+                  <TouchableOpacity
+                    style={[styles.clusterRow, { borderColor: theme.border }]}
+                    onPress={() => {
+                      setClusterPick(null);
+                      onEventClick(item);
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <View style={[styles.clusterDot, { backgroundColor: cfg.color }]} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={[styles.clusterRowTitle, { color: theme.text }]} numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                      <Text style={[styles.clusterRowMeta, { color: theme.textSecondary }]} numberOfLines={1}>
+                        {cfg.label} · {item.author}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+            <TouchableOpacity
+              style={[styles.modalCloseBtn, { backgroundColor: theme.surfaceVariant }]}
+              onPress={() => setClusterPick(null)}
+            >
+              <Text style={[styles.modalCloseBtnText, { color: theme.text }]}>Закрыть</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <View
         style={[
@@ -340,6 +447,15 @@ const createStyles = (theme: any) =>
     },
     smallButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
     smallButtonText: { fontSize: 13, fontWeight: '700' },
+    localityBanner: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      gap: 6,
+    },
+    localityText: { flex: 1, fontSize: 11, fontWeight: '600', lineHeight: 15 },
     map: { flex: 1 },
     bottomPanel: {
       paddingHorizontal: 16,
@@ -411,4 +527,38 @@ const createStyles = (theme: any) =>
       shadowRadius: 4,
     },
     markerText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+    clusterBubble: {
+      minWidth: 36,
+      minHeight: 36,
+      paddingHorizontal: 8,
+      borderRadius: 18,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 3,
+      elevation: 4,
+    },
+    clusterBubbleText: { color: '#FFFFFF', fontWeight: '900', fontSize: 15 },
+    modalWrap: { flex: 1, justifyContent: 'center', padding: 20 },
+    modalSheet: {
+      borderRadius: 16,
+      padding: 16,
+      maxHeight: '80%',
+      elevation: 8,
+    },
+    modalTitle: { fontSize: 17, fontWeight: '900', marginBottom: 12 },
+    clusterRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      marginBottom: 8,
+      gap: 10,
+    },
+    clusterDot: { width: 12, height: 12, borderRadius: 6 },
+    clusterRowTitle: { fontSize: 15, fontWeight: '800' },
+    clusterRowMeta: { fontSize: 12, fontWeight: '600', marginTop: 4 },
+    modalCloseBtn: { marginTop: 8, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+    modalCloseBtnText: { fontWeight: '900', fontSize: 15 },
   });

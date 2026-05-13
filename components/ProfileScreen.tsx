@@ -1,19 +1,35 @@
-import React from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useMemo, useState } from "react";
+import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { useTheme } from "@/contexts/ThemeContext";
-import { Comment, EventWithArchive, User } from "@/types/models";
+import { EventWithArchive, User } from "@/types/models";
 
 type Props = {
   user: User;
   events: EventWithArchive[];
-  comments: Comment[];
   onBack: () => void;
   onLogout: () => void;
+  onUpdateProfile: (payload: { username?: string; avatarEmoji?: string | null }) => void;
+  onChangePassword: (currentPassword: string, newPassword: string) => void;
 };
 
-export default function ProfileScreen({ user, events, comments, onBack, onLogout }: Props) {
+const EMOJI_CHOICES = ["🙂", "😎", "🤝", "🚗", "🚦", "🛣️", "🧭", "⭐", "🔥", "✅", "⚠️", "❗", "🟣", "🔵", "🟢"];
+
+export default function ProfileScreen({
+  user,
+  events,
+  onBack,
+  onLogout,
+  onUpdateProfile,
+  onChangePassword,
+}: Props) {
   const { theme } = useTheme();
+  const [editing, setEditing] = useState(false);
+  const [usernameDraft, setUsernameDraft] = useState(user.username);
+  const [avatarDraft, setAvatarDraft] = useState<string | null>(user.avatarEmoji ?? null);
+  const [currentPass, setCurrentPass] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [newPass2, setNewPass2] = useState("");
 
   const formatDate = (date: Date) =>
     new Intl.DateTimeFormat("ru-RU", {
@@ -34,6 +50,37 @@ export default function ProfileScreen({ user, events, comments, onBack, onLogout
   const daysInSystem = Math.ceil((Date.now() - user.registeredAt.getTime()) / (1000 * 60 * 60 * 24));
 
   const styles = createStyles(theme);
+  const avatarLabel = useMemo(() => {
+    const emoji = user.avatarEmoji?.trim();
+    if (emoji) return emoji;
+    return user.username[0]?.toUpperCase() || "U";
+  }, [user.avatarEmoji, user.username]);
+
+  const saveProfile = () => {
+    const nextUsername = usernameDraft.trim();
+    if (!nextUsername || nextUsername.length < 3) {
+      Alert.alert("Некорректно", "Никнейм должен быть не короче 3 символов.");
+      return;
+    }
+    onUpdateProfile({ username: nextUsername, avatarEmoji: avatarDraft });
+    setEditing(false);
+  };
+
+  const submitPasswordChange = () => {
+    if (!currentPass.trim() || !newPass.trim()) return;
+    if (newPass.trim().length < 4) {
+      Alert.alert("Некорректно", "Новый пароль должен быть минимум 4 символа.");
+      return;
+    }
+    if (newPass !== newPass2) {
+      Alert.alert("Некорректно", "Пароли не совпадают.");
+      return;
+    }
+    onChangePassword(currentPass, newPass);
+    setCurrentPass("");
+    setNewPass("");
+    setNewPass2("");
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -59,7 +106,7 @@ export default function ProfileScreen({ user, events, comments, onBack, onLogout
         <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.shadow }]}>
           <View style={styles.userRow}>
             <View style={[styles.avatar, { backgroundColor: theme.primary }]}>
-              <Text style={styles.avatarText}>{user.username[0]?.toUpperCase() || "U"}</Text>
+              <Text style={styles.avatarText}>{avatarLabel}</Text>
             </View>
             <View style={{ flex: 1 }}>
               <View style={styles.usernameRow}>
@@ -74,6 +121,112 @@ export default function ProfileScreen({ user, events, comments, onBack, onLogout
               <Text style={[styles.meta, { color: theme.textSecondary }]}>Регистрация: {formatDate(user.registeredAt)}</Text>
             </View>
           </View>
+
+          <TouchableOpacity
+            style={[styles.editToggle, { backgroundColor: theme.surfaceVariant, borderColor: theme.border }]}
+            onPress={() => {
+              setEditing((v) => !v);
+              setUsernameDraft(user.username);
+              setAvatarDraft(user.avatarEmoji ?? null);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.editToggleText, { color: theme.text }]}>
+              {editing ? "Закрыть редактирование" : "Редактировать профиль"}
+            </Text>
+          </TouchableOpacity>
+
+          {editing ? (
+            <View style={styles.editBox}>
+              <Text style={[styles.editLabel, { color: theme.textSecondary }]}>Никнейм</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.surfaceVariant, borderColor: theme.border, color: theme.text }]}
+                value={usernameDraft}
+                onChangeText={setUsernameDraft}
+                autoCapitalize="none"
+              />
+
+              <Text style={[styles.editLabel, { color: theme.textSecondary, marginTop: 12 }]}>Аватар (эмодзи)</Text>
+              <View style={styles.emojiRow}>
+                {EMOJI_CHOICES.map((e) => {
+                  const active = avatarDraft === e;
+                  return (
+                    <TouchableOpacity
+                      key={e}
+                      style={[
+                        styles.emojiBtn,
+                        { backgroundColor: active ? theme.primary + "20" : theme.surfaceVariant, borderColor: active ? theme.primary : theme.border },
+                      ]}
+                      onPress={() => setAvatarDraft(e)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.emojiText}>{e}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity
+                  style={[styles.emojiBtn, { backgroundColor: theme.surfaceVariant, borderColor: theme.border }]}
+                  onPress={() => setAvatarDraft(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.emojiText, { color: theme.textSecondary }]}>×</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.editButtonsRow}>
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: theme.primary, borderColor: theme.primary }]}
+                  onPress={saveProfile}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.smallBtnText}>Сохранить</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.smallBtn, { backgroundColor: theme.surfaceVariant, borderColor: theme.border }]}
+                  onPress={() => setEditing(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.text }]}>Отмена</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.divider} />
+
+              <Text style={[styles.editLabel, { color: theme.textSecondary }]}>Смена пароля</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.surfaceVariant, borderColor: theme.border, color: theme.text }]}
+                value={currentPass}
+                onChangeText={setCurrentPass}
+                placeholder="Текущий пароль"
+                placeholderTextColor={theme.textDisabled}
+                secureTextEntry
+              />
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.surfaceVariant, borderColor: theme.border, color: theme.text, marginTop: 10 }]}
+                value={newPass}
+                onChangeText={setNewPass}
+                placeholder="Новый пароль"
+                placeholderTextColor={theme.textDisabled}
+                secureTextEntry
+              />
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.surfaceVariant, borderColor: theme.border, color: theme.text, marginTop: 10 }]}
+                value={newPass2}
+                onChangeText={setNewPass2}
+                placeholder="Повтор нового пароля"
+                placeholderTextColor={theme.textDisabled}
+                secureTextEntry
+              />
+              <TouchableOpacity
+                style={[styles.primaryMiniButton, { backgroundColor: theme.primary, opacity: currentPass.trim() && newPass.trim() ? 1 : 0.6 }]}
+                onPress={submitPasswordChange}
+                disabled={!currentPass.trim() || !newPass.trim()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.primaryMiniButtonText}>Сменить пароль</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
 
         <View style={[styles.section, { backgroundColor: theme.surface, shadowColor: theme.shadow }]}>
@@ -88,28 +241,6 @@ export default function ProfileScreen({ user, events, comments, onBack, onLogout
                 <Text style={[styles.itemMeta, { color: theme.textSecondary }]}>{formatDateTime(e.createdAt)}</Text>
               </View>
             ))
-          )}
-        </View>
-
-        <View style={[styles.section, { backgroundColor: theme.surface, shadowColor: theme.shadow }]}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Мои комментарии ({comments.length})</Text>
-          {comments.length === 0 ? (
-            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Пока нет комментариев.</Text>
-          ) : (
-            comments
-              .slice()
-              .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-              .slice(0, 50)
-              .map((c) => (
-                <View key={c.id} style={[styles.item, { borderColor: theme.border }]}>
-                  <Text style={[styles.itemTitle, { color: theme.text }]} numberOfLines={2}>
-                    {c.text}
-                  </Text>
-                  <Text style={[styles.itemMeta, { color: theme.textSecondary }]}>
-                    {formatDateTime(c.createdAt)}
-                  </Text>
-                </View>
-              ))
           )}
         </View>
       </ScrollView>
@@ -158,6 +289,45 @@ const createStyles = (theme: any) =>
     adminBadge: { borderWidth: 1.5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14 },
     adminBadgeText: { fontSize: 12, fontWeight: "900", letterSpacing: 0.5 },
     meta: { marginTop: 4, fontSize: 13, fontWeight: "600" },
+    editToggle: {
+      marginTop: 14,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      borderWidth: 1.5,
+      alignItems: "center",
+    },
+    editToggleText: { fontSize: 14, fontWeight: "800" },
+    editBox: { marginTop: 14 },
+    editLabel: { fontSize: 13, fontWeight: "800", marginBottom: 8 },
+    input: {
+      borderRadius: 12,
+      borderWidth: 1.5,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+    },
+    emojiRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    emojiBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      borderWidth: 1.5,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    emojiText: { fontSize: 20, fontWeight: "700" },
+    editButtonsRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+    smallBtn: { flex: 1, borderRadius: 10, paddingVertical: 12, alignItems: "center", borderWidth: 1.5 },
+    smallBtnText: { color: "#FFFFFF", fontWeight: "800" },
+    divider: { height: 1, backgroundColor: theme.border, marginVertical: 14, opacity: 0.9 },
+    primaryMiniButton: {
+      marginTop: 12,
+      borderRadius: 12,
+      paddingVertical: 12,
+      alignItems: "center",
+    },
+    primaryMiniButtonText: { color: "#FFFFFF", fontWeight: "900" },
     section: {
       borderRadius: 20,
       padding: 18,

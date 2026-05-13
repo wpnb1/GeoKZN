@@ -1,9 +1,11 @@
 export type EventType = 'accident' | 'police' | 'chat' | 'official' | 'other';
 
 export interface User {
+  userId?: number;
   username: string;
   isAdmin: boolean;
   registeredAt: Date;
+  avatarEmoji?: string | null;
 }
 
 export interface Event {
@@ -39,5 +41,23 @@ export interface Complaint {
   reporter: string;
   reason: string;
   createdAt: Date;
+  targetUsername?: string;
+  targetUserId?: string | null;
+  reportNote?: string | null;
+  /** Событие (если жалоба на событие или комментарий к событию) */
+  eventId?: string | null;
+  eventTitle?: string | null;
+  eventDescription?: string | null;
+  eventAuthor?: string | null;
+  /** Комментарий */
+  commentText?: string | null;
+  commentEventTitle?: string | null;
 }
 
+export interface AdminUserRow {
+  userId: string;
+  username: string;
+  isAdmin: boolean;
+  isBlocked: boolean;
+  createdAt: Date;
+}

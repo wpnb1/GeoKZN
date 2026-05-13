@@ -41,3 +41,15 @@ app-example
 # generated native folders
 /ios
 /android
+
+# local generated docs and temporary files
+_docx_tmp/
+temp_practice_report.docx
+Gotovaya.docx
+Gotovaya.zip
+coursework.docx
+diploma_draft.md
+diploma_outline.md
+diploma_rules.pdf
+Руководство_GeoKZN.docx
+Отчет_по_преддипломной_практике_GeoKZN.docx

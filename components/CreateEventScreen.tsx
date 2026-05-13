@@ -9,7 +9,13 @@ import {
 } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
 
-import { KAZAN_BOUNDS, KAZAN_CENTER } from '@/constants/map';
+import {
+  KAZAN_BOUNDS,
+  KAZAN_CENTER,
+  KAZAN_MIN_ZOOM_LEVEL,
+  LOCALITY_NOTICE_SHORT,
+} from '@/constants/map';
+import { EVENT_DESCRIPTION_MAX_LENGTH } from '@/constants/limits';
 import { useTheme } from '@/contexts/ThemeContext';
 import { EventType, EventWithArchive, User } from '@/types/models';
 
@@ -120,7 +126,7 @@ export default function CreateEventScreen({
   const handleSubmit = () => {
     const t = title.trim();
     const d = description.trim();
-    if (!t || !d) return;
+    if (!t) return;
 
     const endTime = isOfficial ? parseEndTime() : null;
     if (isOfficial && canPickOfficial && !endTime) {
@@ -282,13 +288,17 @@ export default function CreateEventScreen({
               placeholder="Введите описание"
               placeholderTextColor={theme.textDisabled}
               value={description}
-              onChangeText={setDescription}
+              onChangeText={(next) => setDescription(next.slice(0, EVENT_DESCRIPTION_MAX_LENGTH))}
               multiline
             />
+            <Text style={[styles.hint, { color: theme.textDisabled }]}>
+              Макс. {EVENT_DESCRIPTION_MAX_LENGTH} символов. Сейчас: {description.length}
+            </Text>
           </View>
 
           <View style={styles.field}>
             <Text style={[styles.label, { color: theme.textSecondary }]}>Место на карте</Text>
+            <Text style={[styles.localityHint, { color: theme.textSecondary }]}>{LOCALITY_NOTICE_SHORT}</Text>
             <View
               style={[
                 styles.mapContainer,
@@ -302,6 +312,7 @@ export default function CreateEventScreen({
               <MapView
                 style={styles.map}
                 region={region}
+                minZoomLevel={KAZAN_MIN_ZOOM_LEVEL}
                 onRegionChangeComplete={(r) => setRegion(clampRegion(r))}
                 onPress={handleMapPress}
               >
@@ -363,6 +374,7 @@ const createStyles = (theme: any) =>
     title: { fontSize: 22, fontWeight: '700', marginBottom: 16 },
     field: { marginBottom: 18 },
     label: { fontSize: 15, marginBottom: 10, fontWeight: '600' },
+    localityHint: { fontSize: 12, marginBottom: 10, fontWeight: '600', lineHeight: 17 },
     hint: { marginTop: 10, fontSize: 13 },
     input: {
       borderRadius: 12,

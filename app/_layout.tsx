@@ -10,14 +10,22 @@ import MapScreen from '@/components/MapScreen';
 import ProfileScreen from '@/components/ProfileScreen';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { apiRequest } from '@/lib/api';
+import { formatApiErrorDetail, formatApiErrorMessage } from '@/lib/errorHints';
+import { connectRealtime, RealtimeMessage } from '@/lib/realtime';
 
 import {
+  AdminUserRow,
   Comment,
   Complaint,
   Event,
   EventWithArchive,
   User,
 } from '@/types/models';
+
+function alertApiError(e: unknown) {
+  const { summary, hint } = formatApiErrorDetail(e);
+  Alert.alert(summary, hint);
+}
 
 type ScreenName =
   | 'login'
@@ -30,6 +38,25 @@ type ScreenName =
   | 'edit';
 
 let nextEventId = 1;
+
+function isEventArchived(event: Event) {
+  const now = new Date();
+
+  if (event.archivedManually) {
+    return true;
+  }
+
+  if (event.isAdminEvent && event.endTime) {
+    return event.endTime <= now;
+  }
+
+  if (!event.isAdminEvent) {
+    const diffMs = now.getTime() - event.createdAt.getTime();
+    return diffMs / (1000 * 60 * 60) >= 5;
+  }
+
+  return false;
+}
 
 function AppContent() {
   const { isDark } = useTheme();
@@ -115,30 +142,29 @@ function AppContent() {
   });
   const [comments, setComments] = useState<Comment[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([]);
+
+  const syncSelectedEvent = (nextEvents: Event[]) => {
+    setSelectedEvent((prev) => {
+      if (!prev) return prev;
+      const next = nextEvents.find((event) => event.id === prev.id);
+      if (!next) return null;
+      return {
+        ...next,
+        isArchived: isEventArchived(next),
+      };
+    });
+  };
 
   // =========================
   // ARCHIVE LOGIC
   // =========================
 
   const eventsWithArchiveFlag = useMemo<EventWithArchive[]>(() => {
-    const now = new Date();
-
-    return events.map((e) => {
-      let isArchived = false;
-
-      if (e.archivedManually) {
-        isArchived = true;
-      } else if (e.isAdminEvent && e.endTime) {
-        isArchived = e.endTime <= now;
-      } else if (!e.isAdminEvent) {
-        const diffMs =
-          now.getTime() - e.createdAt.getTime();
-        const hours = diffMs / (1000 * 60 * 60);
-        if (hours >= 5) isArchived = true;
-      }
-
-      return { ...e, isArchived };
-    });
+    return events.map((e) => ({
+      ...e,
+      isArchived: isEventArchived(e),
+    }));
   }, [events]);
 
   const visibleEvents = useMemo(
@@ -159,20 +185,27 @@ function AppContent() {
     try {
       const data = await apiRequest<{
         token: string;
-        user: { username: string; role: string; createdAt: string };
+        user: {
+          userId: number;
+          username: string;
+          role: string;
+          createdAt: string;
+          avatarEmoji?: string | null;
+        };
       }>('/auth/login', { method: 'POST', body: { username, password } });
 
       setToken(data.token);
       const user: User = {
+        userId: data.user.userId,
         username: data.user.username,
         isAdmin: data.user.role === 'admin',
         registeredAt: new Date(data.user.createdAt),
+        avatarEmoji: data.user.avatarEmoji ?? null,
       };
       setCurrentUser(user);
       setCurrentScreen('map');
     } catch (e: any) {
-      const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to login';
-      throw new Error(msg);
+      throw new Error(formatApiErrorMessage(e));
     }
   };
 
@@ -180,20 +213,68 @@ function AppContent() {
     try {
       const data = await apiRequest<{
         token: string;
-        user: { username: string; role: string; createdAt: string };
+        user: {
+          userId: number;
+          username: string;
+          role: string;
+          createdAt: string;
+          avatarEmoji?: string | null;
+        };
       }>('/auth/register', { method: 'POST', body: { username, password } });
 
       setToken(data.token);
       const user: User = {
+        userId: data.user.userId,
         username: data.user.username,
         isAdmin: data.user.role === 'admin',
         registeredAt: new Date(data.user.createdAt),
+        avatarEmoji: data.user.avatarEmoji ?? null,
       };
       setCurrentUser(user);
       setCurrentScreen('map');
     } catch (e: any) {
-      const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to register';
-      throw new Error(msg);
+      throw new Error(formatApiErrorMessage(e));
+    }
+  };
+
+  const updateProfileBestEffort = async (payload: { username?: string; avatarEmoji?: string | null }) => {
+    if (!token) {
+      Alert.alert('Вход нужен', 'Пожалуйста, авторизуйтесь, чтобы менять профиль.');
+      return;
+    }
+    try {
+      const data = await apiRequest<{
+        user: {
+          userId: number;
+          username: string;
+          role: string;
+          createdAt: string;
+          avatarEmoji?: string | null;
+        };
+      }>('/me', { token, method: 'PATCH', body: payload });
+      setCurrentUser({
+        userId: data.user.userId,
+        username: data.user.username,
+        isAdmin: data.user.role === 'admin',
+        registeredAt: new Date(data.user.createdAt),
+        avatarEmoji: data.user.avatarEmoji ?? null,
+      });
+      Alert.alert('OK', 'Профиль обновлён.');
+    } catch (e: any) {
+      alertApiError(e);
+    }
+  };
+
+  const changePasswordBestEffort = async (currentPassword: string, newPassword: string) => {
+    if (!token) {
+      Alert.alert('Вход нужен', 'Пожалуйста, авторизуйтесь, чтобы менять пароль.');
+      return;
+    }
+    try {
+      await apiRequest('/me/password', { token, method: 'PATCH', body: { currentPassword, newPassword } });
+      Alert.alert('OK', 'Пароль изменён.');
+    } catch (e: any) {
+      alertApiError(e);
     }
   };
 
@@ -212,18 +293,17 @@ function AppContent() {
     const idNum = Number(eventId);
     if (!Number.isFinite(idNum)) return;
     if (!token) {
-      Alert.alert('Login required', 'Please login as admin.');
+      Alert.alert('Нужен вход', 'Войдите как администратор.');
       return;
     }
 
     apiRequest(`/admin/events/${idNum}/archive`, { token, method: 'POST' })
       .then(async () => {
         await loadEvents();
-        Alert.alert('OK', 'Event archived.');
+        Alert.alert('Готово', 'Событие отправлено в архив.');
       })
       .catch((e: any) => {
-        const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to archive event';
-        Alert.alert('Error', msg);
+        alertApiError(e);
       });
   };
 
@@ -231,7 +311,7 @@ function AppContent() {
     const idNum = Number(eventId);
     if (!Number.isFinite(idNum)) return;
     if (!token) {
-      Alert.alert('Login required', 'Please login to delete events.');
+      Alert.alert('Нужен вход', 'Войдите в аккаунт, чтобы удалять события.');
       return;
     }
 
@@ -243,8 +323,7 @@ function AppContent() {
         setCurrentScreen('map');
       })
       .catch((e: any) => {
-        const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to delete event';
-        Alert.alert('Error', msg);
+        alertApiError(e);
       });
   };
 
@@ -252,7 +331,7 @@ function AppContent() {
     const idNum = Number(commentId);
     if (!Number.isFinite(idNum)) return;
     if (!token) {
-      Alert.alert('Login required', 'Please login to manage comments.');
+      Alert.alert('Нужен вход', 'Войдите в аккаунт для управления комментариями.');
       return;
     }
 
@@ -261,8 +340,7 @@ function AppContent() {
         setComments((prev) => prev.filter((c) => c.id !== String(idNum)));
       })
       .catch((e: any) => {
-        const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to delete comment';
-        Alert.alert('Error', msg);
+        alertApiError(e);
       });
   };
 
@@ -270,7 +348,7 @@ function AppContent() {
     const idNum = Number(commentId);
     if (!Number.isFinite(idNum)) return;
     if (!token) {
-      Alert.alert('Login required', 'Please login to edit comments.');
+      Alert.alert('Нужен вход', 'Войдите в аккаунт для редактирования комментариев.');
       return;
     }
 
@@ -281,8 +359,7 @@ function AppContent() {
         );
       })
       .catch((e: any) => {
-        const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to edit comment';
-        Alert.alert('Error', msg);
+        alertApiError(e);
       });
   };
 
@@ -292,11 +369,11 @@ function AppContent() {
 
   const addCommentBestEffort = async (eventId: string, text: string) => {
     if (!currentUser || !token) {
-      Alert.alert('Login required', 'Please login to comment.');
-      return;
+      Alert.alert('Нужен вход', 'Войдите в аккаунт, чтобы комментировать.');
+      return false;
     }
     const idNum = Number(eventId);
-    if (!Number.isFinite(idNum)) return;
+    if (!Number.isFinite(idNum)) return false;
     try {
       const data = await apiRequest<{ commentId: number; createdAt: string }>(`/events/${idNum}/comments`, {
         token,
@@ -313,17 +390,19 @@ function AppContent() {
           createdAt: new Date(data.createdAt),
         },
       ]);
+      return true;
     } catch (e: any) {
-      Alert.alert('Error', e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to add comment');
+      alertApiError(e);
+      return false;
     }
   };
 
   const reasonLabel = (name: string) => {
     const map: Record<string, string> = {
-      spam: 'Spam',
-      abuse: 'Abuse',
-      fake: 'Fake info',
-      other: 'Other',
+      spam: 'Спам',
+      abuse: 'Оскорбления',
+      fake: 'Ложная информация',
+      other: 'Другое',
     };
     return map[name] ?? name;
   };
@@ -339,7 +418,7 @@ function AppContent() {
 
   const promptReport = (targetType: 'event' | 'comment', targetId: number) => {
     if (!currentUser || !token) {
-      Alert.alert('Login required', 'Please login to send a report.');
+      Alert.alert('Нужен вход', 'Войдите в аккаунт, чтобы отправить жалобу.');
       return;
     }
 
@@ -349,7 +428,7 @@ function AppContent() {
     }
 
     if (targetType === 'event' && selectedEvent?.author === currentUser.username) {
-      Alert.alert('Not allowed', 'You cannot report your own event.');
+      Alert.alert('Недоступно', 'Нельзя пожаловаться на своё событие.');
       return;
     }
 
@@ -358,31 +437,31 @@ function AppContent() {
       text: reasonLabel(r.name),
       onPress: () => {
         reportToApi(targetType, targetId, r.reason_id)
-          .then(() => Alert.alert('Sent', 'Report submitted.'))
-          .catch((e: any) => Alert.alert('Error', e?.message ? String(e.message) : 'Failed'));
+          .then(() => Alert.alert('Отправлено', 'Жалоба принята.'))
+          .catch((e: any) => alertApiError(e));
       },
     }));
 
     if (buttons.length === 0) {
       if (!reportReasonOtherId) {
-        Alert.alert('Error', 'Report reasons are not loaded.');
+        Alert.alert('Ошибка', 'Причины жалоб не загрузились. Проверьте соединение и перезайдите.');
         return;
       }
-      Alert.alert('Report', 'Send report with default reason?', [
+      Alert.alert('Жалоба', 'Отправить с причиной по умолчанию?', [
         {
-          text: 'Send',
+          text: 'Отправить',
           onPress: () => {
             reportToApi(targetType, targetId, reportReasonOtherId)
-              .then(() => Alert.alert('Sent', 'Report submitted.'))
-              .catch((e: any) => Alert.alert('Error', e?.message ? String(e.message) : 'Failed'));
+              .then(() => Alert.alert('Отправлено', 'Жалоба принята.'))
+              .catch((e: any) => alertApiError(e));
           },
         },
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Отмена', style: 'cancel' },
       ]);
       return;
     }
 
-    Alert.alert('Choose reason', undefined, [...buttons, { text: 'Cancel', style: 'cancel' }]);
+    Alert.alert('Причина жалобы', undefined, [...buttons, { text: 'Отмена', style: 'cancel' }]);
   };
 
   const handleComplaintEvent = (_reason: string) => {
@@ -448,8 +527,7 @@ function AppContent() {
       await loadEvents();
       setCurrentScreen('map');
     } catch (e: any) {
-      const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to create event';
-      Alert.alert('Error', msg);
+      alertApiError(e);
     }
   };
 
@@ -467,7 +545,7 @@ function AppContent() {
     const idNum = Number(eventId);
     if (!Number.isFinite(idNum)) return;
     if (!token) {
-      Alert.alert('Login required', 'Please login to edit events.');
+      Alert.alert('Нужен вход', 'Войдите в аккаунт для редактирования событий.');
       return;
     }
 
@@ -487,10 +565,9 @@ function AppContent() {
       await loadEvents();
       setEditEvent(null);
       setCurrentScreen('map');
-      Alert.alert('OK', 'Event updated.');
+      Alert.alert('Готово', 'Событие обновлено.');
     } catch (e: any) {
-      const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to update event';
-      Alert.alert('Error', msg);
+      alertApiError(e);
     }
   };
 
@@ -498,11 +575,11 @@ function AppContent() {
     data: Omit<Event, 'id' | 'author' | 'createdAt' | 'archivedManually'>,
   ) => {
     if (!token) {
-      Alert.alert('Login required', 'Please login as admin.');
+      Alert.alert('Нужен вход', 'Войдите как администратор.');
       return;
     }
     if (!data.endTime) {
-      Alert.alert('Invalid', 'Official events must have an end time.');
+      Alert.alert('Некорректно', 'Укажите дату окончания официального события (ISO).');
       return;
     }
     try {
@@ -519,10 +596,9 @@ function AppContent() {
         },
       });
       await loadEvents();
-      Alert.alert('OK', 'Official event created.');
+      Alert.alert('Готово', 'Официальное событие создано.');
     } catch (e: any) {
-      const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed to create official event';
-      Alert.alert('Error', msg);
+      alertApiError(e);
     }
   };
 
@@ -564,8 +640,31 @@ function AppContent() {
         archivedManually: Boolean(row.is_archived),
       }));
       setEvents(mapped);
+      syncSelectedEvent(mapped);
     } catch {
       // ignore (offline demo)
+    }
+  };
+
+  const loadCommentsForEvent = async (eventId: string) => {
+    const idNum = Number(eventId);
+    if (!Number.isFinite(idNum)) return;
+
+    try {
+      const data = await apiRequest<{ items: any[] }>(`/events/${idNum}/comments`, { token });
+      const mapped: Comment[] = data.items.map((c) => ({
+        id: String(c.comment_id),
+        eventId: String(idNum),
+        author: c.author,
+        text: c.text,
+        createdAt: new Date(c.created_at),
+      }));
+      setComments((prev) => {
+        const rest = prev.filter((x) => x.eventId !== String(idNum));
+        return [...rest, ...mapped];
+      });
+    } catch {
+      // ignore
     }
   };
 
@@ -580,6 +679,15 @@ function AppContent() {
         reporter: r.reporter,
         reason: r.reason,
         createdAt: new Date(r.created_at),
+        targetUsername: r.target_username ?? undefined,
+        targetUserId: r.target_user_id != null ? String(r.target_user_id) : null,
+        reportNote: r.report_note ?? null,
+        eventId: r.event_id ? String(r.event_id) : r.comment_event_id != null ? String(r.comment_event_id) : null,
+        eventTitle: r.event_title ?? null,
+        eventDescription: r.event_description ?? null,
+        eventAuthor: r.target_username ?? null,
+        commentText: r.comment_text ?? null,
+        commentEventTitle: r.comment_event_title ?? null,
       }));
       setComplaints(mapped);
     } catch {
@@ -587,11 +695,57 @@ function AppContent() {
     }
   };
 
+  const loadAdminUsers = async (searchQuery = '') => {
+    if (!token) return;
+    try {
+      const data = await apiRequest<{
+        items: { userId: number; username: string; isAdmin: boolean; isBlocked: boolean; createdAt: string }[];
+      }>(`/admin/users${searchQuery.trim() ? `?q=${encodeURIComponent(searchQuery.trim())}` : ''}`, { token });
+      setAdminUsers(
+        data.items.map((u) => ({
+          userId: String(u.userId),
+          username: u.username,
+          isAdmin: u.isAdmin,
+          isBlocked: u.isBlocked,
+          createdAt: new Date(u.createdAt),
+        })),
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  const adminBlockUserById = async (userId: string, durationMinutes: number | null) => {
+    if (!token) return;
+    try {
+      await apiRequest(`/admin/users/${userId}/block`, {
+        token,
+        method: 'POST',
+        body: { durationMinutes: durationMinutes ?? null },
+      });
+      await loadAdminUsers();
+      Alert.alert('Готово', 'Пользователь заблокирован.');
+    } catch (e: any) {
+      alertApiError(e);
+    }
+  };
+
+  const adminUnblockUserById = async (userId: string) => {
+    if (!token) return;
+    try {
+      await apiRequest(`/admin/users/${userId}/unblock`, { token, method: 'POST' });
+      await loadAdminUsers();
+      Alert.alert('Готово', 'Блокировка снята.');
+    } catch (e: any) {
+      alertApiError(e);
+    }
+  };
+
   const adminReportAction = (action: 'reject' | 'delete-target' | 'block-target', reportId: string) => {
     const idNum = Number(reportId);
     if (!Number.isFinite(idNum)) return;
     if (!token) {
-      Alert.alert('Login required', 'Please login as admin.');
+      Alert.alert('Нужен вход', 'Войдите как администратор.');
       return;
     }
 
@@ -599,11 +753,11 @@ function AppContent() {
       .then(async () => {
         await loadAdminReports();
         await loadEvents();
-        Alert.alert('OK', 'Action completed.');
+        await loadAdminUsers();
+        Alert.alert('Готово', 'Действие выполнено.');
       })
       .catch((e: any) => {
-        const msg = e && typeof e === 'object' && 'error' in e ? String(e.error) : 'Failed';
-        Alert.alert('Error', msg);
+        alertApiError(e);
       });
   };
 
@@ -619,34 +773,49 @@ function AppContent() {
     }
     if (currentScreen === 'admin' && token && currentUser?.isAdmin) {
       loadAdminReports();
+      loadAdminUsers();
     }
     // These loaders are stable enough for demo; avoid re-running due to function identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentScreen, token, currentUser?.isAdmin]);
 
   useEffect(() => {
-    if (currentScreen === 'chat' && token && selectedEvent) {
-      const idNum = Number(selectedEvent.id);
-      if (!Number.isFinite(idNum)) return;
-      apiRequest<{ items: any[] }>(`/events/${idNum}/comments`, { token })
-        .then((data) => {
-          const mapped: Comment[] = data.items.map((c) => ({
-            id: String(c.comment_id),
-            eventId: String(idNum),
-            author: c.author,
-            text: c.text,
-            createdAt: new Date(c.created_at),
-          }));
-          setComments((prev) => {
-            // Replace only this event's comments, keep others if any.
-            const rest = prev.filter((x) => x.eventId !== String(idNum));
-            return [...rest, ...mapped];
-          });
-        })
-        .catch(() => {});
+    if (currentScreen === 'chat' && selectedEvent) {
+      loadCommentsForEvent(selectedEvent.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentScreen, token, selectedEvent?.id]);
+  }, [currentScreen, selectedEvent?.id]);
+
+  useEffect(() => {
+    if ((currentScreen === 'event' || currentScreen === 'chat') && !selectedEvent) {
+      Alert.alert('Событие недоступно', 'Похоже, событие было удалено или скрыто. Возвращаемся на карту.');
+      setCurrentScreen('map');
+      return;
+    }
+    if (currentScreen === 'edit' && !editEvent) {
+      setCurrentScreen('map');
+    }
+  }, [currentScreen, selectedEvent, editEvent]);
+
+  useEffect(() => {
+    const disconnect = connectRealtime((message: RealtimeMessage) => {
+      if (message.type === 'events:changed') {
+        loadEvents();
+        return;
+      }
+
+      if (
+        message.type === 'comments:changed' &&
+        selectedEvent &&
+        String(message.eventId ?? '') === selectedEvent.id
+      ) {
+        loadCommentsForEvent(selectedEvent.id);
+      }
+    });
+
+    return disconnect;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEvent?.id]);
 
   // =========================
   // NAVIGATION
@@ -758,20 +927,16 @@ function AppContent() {
         e.author === currentUser.username,
     );
 
-    const userComments = comments.filter(
-      (c) =>
-        c.author === currentUser.username,
-    );
-
     content = (
       <ProfileScreen
         user={currentUser}
         events={userEvents}
-        comments={userComments}
         onBack={() =>
           setCurrentScreen('map')
         }
         onLogout={handleLogout}
+        onUpdateProfile={updateProfileBestEffort}
+        onChangePassword={changePasswordBestEffort}
       />
     );
   }
@@ -785,14 +950,17 @@ function AppContent() {
         complaints={complaints}
         events={visibleEvents}
         archivedEvents={archivedEvents}
-        onBack={() =>
-          setCurrentScreen('map')
-        }
+        adminUsers={adminUsers}
+        currentAdminUserId={currentUser.userId != null ? String(currentUser.userId) : undefined}
+        onBack={() => setCurrentScreen('map')}
         onArchiveEvent={handleArchiveEvent}
         onCreateOfficialEvent={createOfficialEventBestEffort}
         onRejectComplaint={(reportId) => adminReportAction('reject', reportId)}
         onDeleteComplaintTarget={(reportId) => adminReportAction('delete-target', reportId)}
         onBlockComplaintTarget={(reportId) => adminReportAction('block-target', reportId)}
+        onReloadAdminUsers={loadAdminUsers}
+        onBlockUser={adminBlockUserById}
+        onUnblockUser={adminUnblockUserById}
       />
     );
   }

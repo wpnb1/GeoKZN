@@ -1,5 +1,3 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
 # dependencies
 node_modules/
 
@@ -31,6 +29,7 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript
@@ -53,3 +52,14 @@ diploma_outline.md
 diploma_rules.pdf
 Руководство_GeoKZN.docx
 Отчет_по_преддипломной_практике_GeoKZN.docx
+
+# local artifacts
+__pycache__/
+_docx_inspect/
+android_crash_log.txt
+reference_presentation.pptx
+source_diploma.docx
+source_diploma.zip
+*.broken_backup
+delivery/GeoKZN_share/
+delivery/GeoKZN_share.zip

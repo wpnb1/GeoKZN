@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -16,31 +17,58 @@ type Props = {
   onLogin: (username: string, password: string) => Promise<void>;
   onRegister: (username: string, password: string) => Promise<void>;
   onGuest?: () => void;
+  serverUrl: string;
+  defaultServerUrl: string;
+  onSaveServerUrl: (url: string) => Promise<void>;
+  onResetServerUrl: () => Promise<void>;
 };
 
-export default function LoginScreen({ onLogin, onRegister, onGuest }: Props) {
+type FieldErrors = {
+  username?: string;
+  password?: string;
+};
+
+export default function LoginScreen({
+  onLogin,
+  onRegister,
+  onGuest,
+  serverUrl,
+  defaultServerUrl,
+  onSaveServerUrl,
+  onResetServerUrl,
+}: Props) {
   const { theme } = useTheme();
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
+  const [showServerSettings, setShowServerSettings] = useState(false);
+  const [serverDraft, setServerDraft] = useState(serverUrl);
+  const [serverMessage, setServerMessage] = useState('');
 
   const handleSubmit = async () => {
     setError('');
 
     const u = username.trim();
     const p = password;
+    const nextErrors: FieldErrors = {};
 
-    if (!u || !p) {
-      setError('Пожалуйста, заполните все поля');
-      return;
+    if (!u) {
+      nextErrors.username = 'Введите логин.';
+    } else if (isRegister && u.length < 3) {
+      nextErrors.username = 'Логин должен содержать минимум 3 символа.';
     }
 
-    if (p.length < 4) {
-      setError('Пароль должен содержать минимум 4 символа');
-      return;
+    if (!p) {
+      nextErrors.password = 'Введите пароль.';
+    } else if (p.length < 4) {
+      nextErrors.password = 'Пароль должен содержать минимум 4 символа.';
     }
+
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
 
     setSubmitting(true);
     try {
@@ -50,117 +78,243 @@ export default function LoginScreen({ onLogin, onRegister, onGuest }: Props) {
         await onLogin(u, p);
       }
     } catch (e: any) {
-      setError(e?.message ? String(e.message) : 'Ошибка авторизации');
+      setError(e?.message ? String(e.message) : 'Ошибка авторизации.');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleSaveServerUrl = async () => {
+    try {
+      await onSaveServerUrl(serverDraft);
+      setServerMessage('Адрес сервера сохранен.');
+      setError('');
+    } catch (e: any) {
+      setServerMessage(e?.message ? String(e.message) : 'Не удалось сохранить адрес сервера.');
+    }
+  };
+
+  const handleResetServerUrl = async () => {
+    try {
+      await onResetServerUrl();
+      setServerDraft(defaultServerUrl);
+      setServerMessage('Возвращен адрес по умолчанию.');
+      setError('');
+    } catch (e: any) {
+      setServerMessage(e?.message ? String(e.message) : 'Не удалось вернуть адрес по умолчанию.');
+    }
+  };
+
   const styles = createStyles(theme);
+  const isServerMessageSuccess =
+    serverMessage.includes('сохран') || serverMessage.includes('Возвращ');
 
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.shadow }]}>
-        <View style={styles.logoContainer}>
-          <View style={[styles.logoCircle, { backgroundColor: theme.primary }]}>
-            <LogoMark size={36} color="#FFFFFF" accent="#FFFFFF" />
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.shadow }]}>
+          <View style={styles.logoContainer}>
+            <View style={[styles.logoCircle, { backgroundColor: theme.primary }]}>
+              <LogoMark size={36} color="#FFFFFF" accent="#FFFFFF" />
+            </View>
+            <Text style={[styles.logo, { color: theme.primary }]}>GeoKZN</Text>
+            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Казань</Text>
           </View>
-          <Text style={[styles.logo, { color: theme.primary }]}>GeoKZN</Text>
-          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Казань</Text>
-        </View>
 
-        <Text style={[styles.title, { color: theme.text }]}>
-          {isRegister ? 'Регистрация' : 'Вход в систему'}
-        </Text>
+          <Text style={[styles.title, { color: theme.text }]}>
+            {isRegister ? 'Регистрация' : 'Вход в систему'}
+          </Text>
 
-        <View style={styles.field}>
-          <Text style={[styles.label, { color: theme.textSecondary }]}>Логин</Text>
-          <TextInput
-            style={[
-              styles.input,
-              {
-                backgroundColor: theme.surfaceVariant,
-                borderColor: theme.border,
-                color: theme.text,
-              },
-            ]}
-            placeholder="Введите логин"
-            placeholderTextColor={theme.textDisabled}
-            value={username}
-            onChangeText={setUsername}
-            editable={!submitting}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-
-        <View style={styles.field}>
-          <Text style={[styles.label, { color: theme.textSecondary }]}>Пароль</Text>
-          <TextInput
-            style={[
-              styles.input,
-              {
-                backgroundColor: theme.surfaceVariant,
-                borderColor: theme.border,
-                color: theme.text,
-              },
-            ]}
-            placeholder="Введите пароль"
-            placeholderTextColor={theme.textDisabled}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            editable={!submitting}
-          />
-        </View>
-
-        {error ? (
-          <View style={[styles.errorBox, { backgroundColor: theme.errorLight + '20' }]}>
-            <Text style={[styles.error, { color: theme.error }]}>{error}</Text>
+          <View style={styles.field}>
+            <Text style={[styles.label, { color: theme.textSecondary }]}>Логин</Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.surfaceVariant,
+                  borderColor: fieldErrors.username ? theme.error : theme.border,
+                  color: theme.text,
+                },
+              ]}
+              placeholder="Введите логин"
+              placeholderTextColor={theme.textDisabled}
+              value={username}
+              onChangeText={(next) => {
+                setUsername(next);
+                setFieldErrors((prev) => ({ ...prev, username: undefined }));
+                setError('');
+              }}
+              editable={!submitting}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {fieldErrors.username ? (
+              <Text style={[styles.fieldError, { color: theme.error }]}>{fieldErrors.username}</Text>
+            ) : null}
           </View>
-        ) : null}
 
-        <TouchableOpacity
-          style={[styles.button, { backgroundColor: theme.primary, opacity: submitting ? 0.7 : 1 }]}
-          onPress={handleSubmit}
-          activeOpacity={0.8}
-          disabled={submitting}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonText}>{isRegister ? 'Зарегистрироваться' : 'Войти'}</Text>
-          )}
-        </TouchableOpacity>
+          <View style={styles.field}>
+            <Text style={[styles.label, { color: theme.textSecondary }]}>Пароль</Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.surfaceVariant,
+                  borderColor: fieldErrors.password ? theme.error : theme.border,
+                  color: theme.text,
+                },
+              ]}
+              placeholder="Введите пароль"
+              placeholderTextColor={theme.textDisabled}
+              value={password}
+              onChangeText={(next) => {
+                setPassword(next);
+                setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                setError('');
+              }}
+              secureTextEntry
+              editable={!submitting}
+            />
+            {fieldErrors.password ? (
+              <Text style={[styles.fieldError, { color: theme.error }]}>{fieldErrors.password}</Text>
+            ) : null}
+          </View>
 
-        {onGuest ? (
+          {error ? (
+            <View style={[styles.errorBox, { backgroundColor: theme.errorLight + '20' }]}>
+              <Text style={[styles.error, { color: theme.error }]}>{error}</Text>
+            </View>
+          ) : null}
+
           <TouchableOpacity
-            style={[styles.guestButton, { borderColor: theme.border, backgroundColor: theme.surface }]}
-            onPress={onGuest}
+            style={[styles.button, { backgroundColor: theme.primary, opacity: submitting ? 0.7 : 1 }]}
+            onPress={handleSubmit}
+            activeOpacity={0.8}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.buttonText}>{isRegister ? 'Зарегистрироваться' : 'Войти'}</Text>
+            )}
+          </TouchableOpacity>
+
+          {onGuest ? (
+            <TouchableOpacity
+              style={[styles.guestButton, { borderColor: theme.border, backgroundColor: theme.surface }]}
+              onPress={onGuest}
+              activeOpacity={0.7}
+              disabled={submitting}
+            >
+              <Text style={[styles.guestButtonText, { color: theme.text }]}>Войти как гость</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <View style={[styles.serverCard, { borderColor: theme.border, backgroundColor: theme.surfaceVariant }]}>
+            <Text style={[styles.serverLabel, { color: theme.textSecondary }]}>Сервер</Text>
+            <Text style={[styles.serverValue, { color: theme.text }]} numberOfLines={2}>
+              {serverUrl}
+            </Text>
+
+            <TouchableOpacity
+              onPress={() => {
+                setShowServerSettings((prev) => !prev);
+                setServerDraft(serverUrl);
+                setServerMessage('');
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.link, { color: theme.primary, marginTop: 10 }]}>
+                {showServerSettings ? 'Скрыть настройки сервера' : 'Изменить адрес сервера'}
+              </Text>
+            </TouchableOpacity>
+
+            {showServerSettings ? (
+              <View style={styles.serverSettingsBox}>
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: theme.surface,
+                      borderColor: theme.border,
+                      color: theme.text,
+                    },
+                  ]}
+                  placeholder="http://192.168.0.10:4000"
+                  placeholderTextColor={theme.textDisabled}
+                  value={serverDraft}
+                  onChangeText={(next) => {
+                    setServerDraft(next);
+                    setServerMessage('');
+                  }}
+                  editable={!submitting}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                />
+
+                <Text
+                  style={[
+                    styles.serverHint,
+                    {
+                      color: serverMessage
+                        ? isServerMessageSuccess
+                          ? theme.success
+                          : theme.error
+                        : theme.textSecondary,
+                    },
+                  ]}
+                >
+                  {serverMessage || 'Для APK укажите IP ноутбука или другого сервера с backend.'}
+                </Text>
+
+                <View style={styles.serverButtonsRow}>
+                  <TouchableOpacity
+                    style={[styles.serverButton, { backgroundColor: theme.primary }]}
+                    onPress={handleSaveServerUrl}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.serverButtonText}>Сохранить</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.serverButton,
+                      { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1.5 },
+                    ]}
+                    onPress={handleResetServerUrl}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.serverButtonText, { color: theme.text }]}>По умолчанию</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+          </View>
+
+          <TouchableOpacity
+            onPress={() => {
+              setIsRegister(!isRegister);
+              setError('');
+              setFieldErrors({});
+              setPassword('');
+            }}
             activeOpacity={0.7}
             disabled={submitting}
           >
-            <Text style={[styles.guestButtonText, { color: theme.text }]}>Войти как гость</Text>
+            <Text style={[styles.link, { color: theme.primary }]}>
+              {isRegister ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться'}
+            </Text>
           </TouchableOpacity>
-        ) : null}
-
-        <TouchableOpacity
-          onPress={() => {
-            setIsRegister(!isRegister);
-            setError('');
-            setPassword('');
-          }}
-          activeOpacity={0.7}
-          disabled={submitting}
-        >
-          <Text style={[styles.link, { color: theme.primary }]}> 
-            {isRegister ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -169,8 +323,12 @@ const createStyles = (theme: any) =>
   StyleSheet.create({
     container: {
       flex: 1,
-      justifyContent: 'center',
       padding: 20,
+    },
+    scrollContent: {
+      flexGrow: 1,
+      justifyContent: 'center',
+      paddingVertical: 24,
     },
     card: {
       borderRadius: 24,
@@ -227,6 +385,11 @@ const createStyles = (theme: any) =>
       paddingVertical: 14,
       fontSize: 16,
     },
+    fieldError: {
+      fontSize: 13,
+      marginTop: 8,
+      fontWeight: '500',
+    },
     errorBox: {
       borderRadius: 10,
       padding: 12,
@@ -261,6 +424,49 @@ const createStyles = (theme: any) =>
     guestButtonText: {
       fontWeight: '600',
       fontSize: 15,
+    },
+    serverCard: {
+      borderRadius: 14,
+      borderWidth: 1.5,
+      padding: 14,
+      marginTop: 14,
+    },
+    serverLabel: {
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: 6,
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+    serverValue: {
+      fontSize: 14,
+      fontWeight: '600',
+      lineHeight: 20,
+    },
+    serverSettingsBox: {
+      marginTop: 12,
+    },
+    serverHint: {
+      fontSize: 12,
+      fontWeight: '500',
+      lineHeight: 18,
+      marginTop: 8,
+    },
+    serverButtonsRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 12,
+    },
+    serverButton: {
+      flex: 1,
+      borderRadius: 12,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    serverButtonText: {
+      color: '#FFFFFF',
+      fontWeight: '700',
+      fontSize: 14,
     },
     link: {
       textAlign: 'center',

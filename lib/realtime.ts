@@ -1,12 +1,12 @@
-import { API_URL } from '@/lib/api';
+import { getApiUrl } from './api';
 
 export type RealtimeMessage =
   | { type: 'connection:ready' }
   | { type: 'events:changed' }
   | { type: 'comments:changed'; eventId?: number | null };
 
-function buildRealtimeUrl() {
-  const wsBase = API_URL.replace(/^http/i, 'ws');
+export function buildRealtimeUrl() {
+  const wsBase = getApiUrl().replace(/^http/i, 'ws');
   return `${wsBase}/ws`;
 }
 

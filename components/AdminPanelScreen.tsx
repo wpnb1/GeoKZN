@@ -9,16 +9,16 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, Region } from 'react-native-maps';
+import MapView, { Marker } from 'react-native-maps';
 
-import { EVENT_DESCRIPTION_MAX_LENGTH } from '@/constants/limits';
+import { EVENT_DESCRIPTION_MAX_LENGTH, EVENT_TITLE_MAX_LENGTH } from '@/constants/limits';
 import {
-  KAZAN_BOUNDS,
   KAZAN_CENTER,
   KAZAN_MIN_ZOOM_LEVEL,
   LOCALITY_NOTICE_SHORT,
 } from '@/constants/map';
 import { useTheme } from '@/contexts/ThemeContext';
+import { clampMapCoord, useBoundedMapRegion } from '@/lib/useBoundedMapRegion';
 import { AdminUserRow, Complaint, Event, EventWithArchive } from '@/types/models';
 
 type Props = {
@@ -41,29 +41,7 @@ type Props = {
 };
 
 type Tab = 'create' | 'complaints' | 'archive' | 'users';
-
-function clampRegion(region: Region): Region {
-  let { latitude, longitude, latitudeDelta, longitudeDelta } = region;
-
-  if (latitude < KAZAN_BOUNDS.minLat) latitude = KAZAN_BOUNDS.minLat;
-  else if (latitude > KAZAN_BOUNDS.maxLat) latitude = KAZAN_BOUNDS.maxLat;
-
-  if (longitude < KAZAN_BOUNDS.minLng) longitude = KAZAN_BOUNDS.minLng;
-  else if (longitude > KAZAN_BOUNDS.maxLng) longitude = KAZAN_BOUNDS.maxLng;
-
-  const maxDelta = 0.6;
-  latitudeDelta = Math.min(latitudeDelta, maxDelta);
-  longitudeDelta = Math.min(longitudeDelta, maxDelta);
-
-  return { latitude, longitude, latitudeDelta, longitudeDelta };
-}
-
-function clampCoord(coord: { latitude: number; longitude: number }) {
-  return {
-    latitude: Math.min(Math.max(coord.latitude, KAZAN_BOUNDS.minLat), KAZAN_BOUNDS.maxLat),
-    longitude: Math.min(Math.max(coord.longitude, KAZAN_BOUNDS.minLng), KAZAN_BOUNDS.maxLng),
-  };
-}
+type CreateFormErrors = { title?: string; endTime?: string };
 
 function truncateText(text: string | null | undefined, max: number) {
   if (!text) return '';
@@ -90,14 +68,17 @@ export default function AdminPanelScreen({
 }: Props) {
   const { theme } = useTheme();
   const [tab, setTab] = useState<Tab>('create');
+  const [isCreateTabScrollEnabled, setIsCreateTabScrollEnabled] = useState(true);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [createErrors, setCreateErrors] = useState<CreateFormErrors>({});
 
-  const [region, setRegion] = useState<Region>(KAZAN_CENTER);
+  const { mapRef, region, handleMapPanDrag, handleRegionChangeComplete } =
+    useBoundedMapRegion(KAZAN_CENTER);
   const [selectedCoord, setSelectedCoord] = useState<{ latitude: number; longitude: number }>(() =>
-    clampCoord({ latitude: KAZAN_CENTER.latitude, longitude: KAZAN_CENTER.longitude }),
+    clampMapCoord({ latitude: KAZAN_CENTER.latitude, longitude: KAZAN_CENTER.longitude }),
   );
 
   const [detailComplaint, setDetailComplaint] = useState<Complaint | null>(null);
@@ -128,10 +109,23 @@ export default function AdminPanelScreen({
   const createOfficial = () => {
     const t = title.trim();
     const d = description.trim();
-    if (!t) return;
-
     const dt = endTime.trim();
     const parsedEnd = dt ? new Date(dt) : null;
+    const nextErrors: CreateFormErrors = {};
+
+    if (!t) {
+      nextErrors.title = 'Введите заголовок события.';
+    } else if (t.length > EVENT_TITLE_MAX_LENGTH) {
+      nextErrors.title = `Заголовок не должен превышать ${EVENT_TITLE_MAX_LENGTH} символов.`;
+    }
+    if (!dt) {
+      nextErrors.endTime = 'Укажите дату окончания.';
+    } else if (!parsedEnd || !Number.isFinite(parsedEnd.getTime())) {
+      nextErrors.endTime = 'Введите корректную дату в формате ISO.';
+    }
+
+    setCreateErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
 
     onCreateOfficialEvent({
       type: 'official',
@@ -143,9 +137,10 @@ export default function AdminPanelScreen({
       isAdminEvent: true,
     } as any);
 
-    setTitle('');
-    setDescription('');
-    setEndTime('');
+      setTitle('');
+      setDescription('');
+      setEndTime('');
+      setCreateErrors({});
   };
 
   const handleMapPress = (e: any) => {
@@ -154,8 +149,11 @@ export default function AdminPanelScreen({
     const lat = Number(coord.latitude);
     const lng = Number(coord.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    setSelectedCoord(clampCoord({ latitude: lat, longitude: lng }));
+    setSelectedCoord(clampMapCoord({ latitude: lat, longitude: lng }));
   };
+
+  const beginMapInteraction = () => setIsCreateTabScrollEnabled(false);
+  const endMapInteraction = () => setIsCreateTabScrollEnabled(true);
 
   const promptBlockDuration = (username: string, userId: string) => {
     Alert.alert(`Заблокировать «${username}»`, 'Выберите срок', [
@@ -230,19 +228,36 @@ export default function AdminPanelScreen({
       </ScrollView>
 
       {tab === 'create' && (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} scrollEnabled={isCreateTabScrollEnabled}>
           <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.shadow }]}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Официальное событие</Text>
 
             <View style={styles.field}>
               <Text style={[styles.label, { color: theme.textSecondary }]}>Заголовок</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: theme.surfaceVariant, borderColor: theme.border, color: theme.text }]}
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: theme.surfaceVariant,
+                    borderColor: createErrors.title ? theme.error : theme.border,
+                    color: theme.text,
+                  },
+                ]}
                 value={title}
-                onChangeText={setTitle}
+                onChangeText={(next) => {
+                  setTitle(next.slice(0, EVENT_TITLE_MAX_LENGTH));
+                  setCreateErrors((prev) => ({ ...prev, title: undefined }));
+                }}
+                maxLength={EVENT_TITLE_MAX_LENGTH}
                 placeholder="Например: Перекрытие дороги"
                 placeholderTextColor={theme.textDisabled}
               />
+              <Text style={[styles.hint, { color: theme.textDisabled }]}>
+                Макс. {EVENT_TITLE_MAX_LENGTH} символов. Сейчас: {title.length}
+              </Text>
+              {createErrors.title ? (
+                <Text style={[styles.hint, { color: theme.error }]}>{createErrors.title}</Text>
+              ) : null}
             </View>
 
             <View style={styles.field}>
@@ -267,13 +282,26 @@ export default function AdminPanelScreen({
             <View style={styles.field}>
               <Text style={[styles.label, { color: theme.textSecondary }]}>Окончание (ISO)</Text>
               <TextInput
-                style={[styles.input, { backgroundColor: theme.surfaceVariant, borderColor: theme.border, color: theme.text }]}
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: theme.surfaceVariant,
+                    borderColor: createErrors.endTime ? theme.error : theme.border,
+                    color: theme.text,
+                  },
+                ]}
                 value={endTime}
-                onChangeText={setEndTime}
+                onChangeText={(next) => {
+                  setEndTime(next);
+                  setCreateErrors((prev) => ({ ...prev, endTime: undefined }));
+                }}
                 placeholder="2026-03-10T18:00:00"
                 placeholderTextColor={theme.textDisabled}
                 autoCapitalize="none"
               />
+              {createErrors.endTime ? (
+                <Text style={[styles.hint, { color: theme.error }]}>{createErrors.endTime}</Text>
+              ) : null}
               <Text style={[styles.hint, { color: theme.textDisabled }]}>Это время нужно для автоархивации официального события.</Text>
             </View>
 
@@ -287,11 +315,26 @@ export default function AdminPanelScreen({
                 ]}
               >
                 <MapView
+                  ref={mapRef}
                   style={styles.map}
-                  region={region}
+                  initialRegion={region}
                   minZoomLevel={KAZAN_MIN_ZOOM_LEVEL}
-                  onRegionChangeComplete={(r) => setRegion(clampRegion(r))}
-                  onPress={handleMapPress}
+                  onTouchStart={beginMapInteraction}
+                  onTouchEnd={endMapInteraction}
+                  onTouchCancel={endMapInteraction}
+                  onPanDrag={() => {
+                    beginMapInteraction();
+                    handleMapPanDrag();
+                  }}
+                  onRegionChangeComplete={(nextRegion) => {
+                    handleRegionChangeComplete(nextRegion);
+                    endMapInteraction();
+                  }}
+                  onPress={(event) => {
+                    handleMapPress(event);
+                    endMapInteraction();
+                  }}
+                  moveOnMarkerPress={false}
                 >
                   <Marker coordinate={selectedCoord} />
                 </MapView>

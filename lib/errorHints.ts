@@ -1,4 +1,4 @@
-import type { ApiError } from '@/lib/api';
+import type { ApiError } from './api';
 
 /** Человекочитаемое сообщение об ошибке API + что сделать пользователю */
 export function formatApiErrorDetail(error: unknown): { summary: string; hint: string } {

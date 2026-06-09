@@ -1,0 +1,39 @@
+Отправлять лучше всего одну папку:
+delivery\GeoKZN_share
+
+Если отправлять вручную, обязательно нужны:
+- app
+- assets
+- backend
+- components
+- constants
+- contexts
+- hooks
+- lib
+- scripts
+- tests
+- types
+- package.json
+- package-lock.json
+- tsconfig.json
+- eslint.config.js
+- .env.example
+
+Дополнительно приложить:
+- delivery\db\geomessenger_dump.sql
+- delivery\config\backend.env
+- delivery\config\app.env.example
+- delivery\README_SEND_RU.md
+
+Не отправлять:
+- node_modules
+- .git
+- .expo
+- dist
+- docs
+- _docx_inspect
+- _docx_tmp
+- __pycache__
+- *.docx
+- *.zip
+

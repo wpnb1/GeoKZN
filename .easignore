@@ -1,0 +1,12 @@
+delivery
+dist
+docs
+node_modules
+backend/node_modules
+.expo
+backend/.expo
+_docx_inspect
+_docx_tmp
+__pycache__
+*.docx
+*.zip

@@ -8,17 +8,17 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, Region } from 'react-native-maps';
+import MapView, { Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 
 import LogoMark from '@/components/LogoMark';
 import {
-  KAZAN_BOUNDS,
   KAZAN_CENTER,
   KAZAN_MIN_ZOOM_LEVEL,
   LOCALITY_NOTICE_SHORT,
 } from '@/constants/map';
 import { useTheme } from '@/contexts/ThemeContext';
+import { clampMapCoord, useBoundedMapRegion } from '@/lib/useBoundedMapRegion';
 import { EventType, EventWithArchive, User } from '@/types/models';
 
 type Props = {
@@ -47,22 +47,6 @@ type MarkerItem =
   | { kind: 'single'; event: EventWithArchive }
   | { kind: 'cluster'; key: string; events: EventWithArchive[]; lat: number; lng: number };
 
-function clampRegion(region: Region): Region {
-  let { latitude, longitude, latitudeDelta, longitudeDelta } = region;
-
-  if (latitude < KAZAN_BOUNDS.minLat) latitude = KAZAN_BOUNDS.minLat;
-  else if (latitude > KAZAN_BOUNDS.maxLat) latitude = KAZAN_BOUNDS.maxLat;
-
-  if (longitude < KAZAN_BOUNDS.minLng) longitude = KAZAN_BOUNDS.minLng;
-  else if (longitude > KAZAN_BOUNDS.maxLng) longitude = KAZAN_BOUNDS.maxLng;
-
-  const maxDelta = 0.6;
-  latitudeDelta = Math.min(latitudeDelta, maxDelta);
-  longitudeDelta = Math.min(longitudeDelta, maxDelta);
-
-  return { latitude, longitude, latitudeDelta, longitudeDelta };
-}
-
 export default function MapScreen({
   events,
   currentUser,
@@ -75,7 +59,16 @@ export default function MapScreen({
   onMapLongPress,
 }: Props) {
   const { theme, toggleTheme, isDark } = useTheme();
-  const [region, setRegion] = useState<Region>(KAZAN_CENTER);
+  const { mapRef, region, handleMapPanDrag, handleRegionChangeComplete } =
+    useBoundedMapRegion(KAZAN_CENTER);
+  const handleMapLongPress = currentUser
+    ? (e: unknown) => {
+        const coord = (e as any)?.nativeEvent?.coordinate;
+        if (coord && typeof coord.latitude === 'number' && typeof coord.longitude === 'number') {
+          onMapLongPress(clampMapCoord(coord));
+        }
+      }
+    : undefined;
 
   const [filters, setFilters] = useState<Record<EventType, boolean>>({
     accident: true,
@@ -226,16 +219,14 @@ export default function MapScreen({
       </View>
 
       <MapView
+        ref={mapRef}
         style={styles.map}
-        region={region}
+        initialRegion={KAZAN_CENTER}
         minZoomLevel={KAZAN_MIN_ZOOM_LEVEL}
-        onRegionChangeComplete={(r) => setRegion(clampRegion(r))}
-        onLongPress={(e) => {
-          const coord = (e as any)?.nativeEvent?.coordinate;
-          if (coord && typeof coord.latitude === 'number' && typeof coord.longitude === 'number') {
-            onMapLongPress(coord);
-          }
-        }}
+        onPanDrag={handleMapPanDrag}
+        onRegionChangeComplete={handleRegionChangeComplete}
+        moveOnMarkerPress={false}
+        onLongPress={handleMapLongPress}
       >
         {markerItems.map((item) => {
           if (item.kind === 'single') {
@@ -249,6 +240,7 @@ export default function MapScreen({
                 title={event.title}
                 description={event.description}
                 onPress={() => onEventClick(event)}
+                tracksViewChanges={false}
               >
                 <View
                   style={[
@@ -267,6 +259,7 @@ export default function MapScreen({
               key={item.key}
               coordinate={{ latitude: item.lat, longitude: item.lng }}
               onPress={() => setClusterPick(item.events)}
+              tracksViewChanges={false}
             >
               <View style={[styles.clusterBubble, { backgroundColor: theme.primary, borderColor: theme.surface }]}>
                 <Text style={styles.clusterBubbleText}>{n}</Text>

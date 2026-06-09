@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -7,16 +8,20 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, Region } from 'react-native-maps';
+import MapView, { Marker } from 'react-native-maps';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  KAZAN_BOUNDS,
+  EVENT_DESCRIPTION_MAX_LENGTH,
+  EVENT_TITLE_MAX_LENGTH,
+} from '@/constants/limits';
+import {
   KAZAN_CENTER,
   KAZAN_MIN_ZOOM_LEVEL,
   LOCALITY_NOTICE_SHORT,
 } from '@/constants/map';
-import { EVENT_DESCRIPTION_MAX_LENGTH } from '@/constants/limits';
 import { useTheme } from '@/contexts/ThemeContext';
+import { clampMapCoord, useBoundedMapRegion } from '@/lib/useBoundedMapRegion';
 import { EventType, EventWithArchive, User } from '@/types/models';
 
 type CreatePayload = {
@@ -25,7 +30,6 @@ type CreatePayload = {
   description: string;
   lat: number;
   lng: number;
-  // Used only for official events (admin). For other types ignored.
   endTime: Date | null;
 };
 
@@ -38,6 +42,12 @@ type Props = {
   initialEvent?: EventWithArchive | null;
 };
 
+type FormErrors = {
+  type?: string;
+  title?: string;
+  endTime?: string;
+};
+
 const eventTypes: { value: EventType; label: string }[] = [
   { value: 'accident', label: 'ДТП' },
   { value: 'police', label: 'Пост ДПС' },
@@ -45,29 +55,6 @@ const eventTypes: { value: EventType; label: string }[] = [
   { value: 'official', label: 'Официальное' },
   { value: 'other', label: 'Другое' },
 ];
-
-function clampRegion(region: Region): Region {
-  let { latitude, longitude, latitudeDelta, longitudeDelta } = region;
-
-  if (latitude < KAZAN_BOUNDS.minLat) latitude = KAZAN_BOUNDS.minLat;
-  else if (latitude > KAZAN_BOUNDS.maxLat) latitude = KAZAN_BOUNDS.maxLat;
-
-  if (longitude < KAZAN_BOUNDS.minLng) longitude = KAZAN_BOUNDS.minLng;
-  else if (longitude > KAZAN_BOUNDS.maxLng) longitude = KAZAN_BOUNDS.maxLng;
-
-  const maxDelta = 0.6;
-  latitudeDelta = Math.min(latitudeDelta, maxDelta);
-  longitudeDelta = Math.min(longitudeDelta, maxDelta);
-
-  return { latitude, longitude, latitudeDelta, longitudeDelta };
-}
-
-function clampCoord(coord: { latitude: number; longitude: number }) {
-  return {
-    latitude: Math.min(Math.max(coord.latitude, KAZAN_BOUNDS.minLat), KAZAN_BOUNDS.maxLat),
-    longitude: Math.min(Math.max(coord.longitude, KAZAN_BOUNDS.minLng), KAZAN_BOUNDS.maxLng),
-  };
-}
 
 export default function CreateEventScreen({
   currentUser,
@@ -78,9 +65,10 @@ export default function CreateEventScreen({
   initialEvent,
 }: Props) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [isMapPickerOpen, setIsMapPickerOpen] = useState(false);
 
   const mode = initialEvent ? 'edit' : 'create';
-
   const initialCoord = useMemo(() => {
     if (initialEvent) return { latitude: initialEvent.lat, longitude: initialEvent.lng };
     return {
@@ -89,31 +77,30 @@ export default function CreateEventScreen({
     };
   }, [initialCoords?.latitude, initialCoords?.longitude, initialEvent]);
 
-  const [type, setType] = useState<EventType>(initialEvent?.type ?? 'other');
+  const [type, setType] = useState<EventType | null>(initialEvent?.type ?? null);
   const [title, setTitle] = useState(initialEvent?.title ?? '');
   const [description, setDescription] = useState(initialEvent?.description ?? '');
-
+  const [errors, setErrors] = useState<FormErrors>({});
   const [endTimeText, setEndTimeText] = useState(() => {
     if (initialEvent?.endTime) {
-      // Keep it editable and readable; user may paste local ISO.
       return initialEvent.endTime.toISOString().slice(0, 19);
     }
     return '';
   });
-
-  const [region, setRegion] = useState<Region>({
-    latitude: initialCoord.latitude,
-    longitude: initialCoord.longitude,
-    latitudeDelta: KAZAN_CENTER.latitudeDelta,
-    longitudeDelta: KAZAN_CENTER.longitudeDelta,
-  });
-
+  const { mapRef, region, handleMapPanDrag, handleRegionChangeComplete } =
+    useBoundedMapRegion({
+      latitude: initialCoord.latitude,
+      longitude: initialCoord.longitude,
+      latitudeDelta: KAZAN_CENTER.latitudeDelta,
+      longitudeDelta: KAZAN_CENTER.longitudeDelta,
+    });
   const [selectedCoord, setSelectedCoord] = useState<{ latitude: number; longitude: number }>(
-    clampCoord(initialCoord),
+    clampMapCoord(initialCoord),
   );
 
   const canPickOfficial = currentUser.isAdmin;
   const isOfficial = type === 'official';
+  const styles = createStyles(theme);
 
   const parseEndTime = (): Date | null => {
     const raw = endTimeText.trim();
@@ -124,20 +111,32 @@ export default function CreateEventScreen({
   };
 
   const handleSubmit = () => {
-    const t = title.trim();
-    const d = description.trim();
-    if (!t) return;
-
+    const trimmedTitle = title.trim();
+    const trimmedDescription = description.trim();
     const endTime = isOfficial ? parseEndTime() : null;
-    if (isOfficial && canPickOfficial && !endTime) {
-      // Required by backend for official events.
-      return;
+    const nextErrors: FormErrors = {};
+
+    if (!type) {
+      nextErrors.type = 'Выберите тип события.';
     }
+    if (!trimmedTitle) {
+      nextErrors.title = 'Введите заголовок события.';
+    } else if (trimmedTitle.length > EVENT_TITLE_MAX_LENGTH) {
+      nextErrors.title = `Заголовок не должен превышать ${EVENT_TITLE_MAX_LENGTH} символов.`;
+    }
+    if (isOfficial && canPickOfficial && !endTimeText.trim()) {
+      nextErrors.endTime = 'Укажите дату окончания.';
+    } else if (isOfficial && canPickOfficial && !endTime) {
+      nextErrors.endTime = 'Введите корректную дату в формате ISO.';
+    }
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0 || !type) return;
 
     const payload: CreatePayload = {
       type,
-      title: t,
-      description: d,
+      title: trimmedTitle,
+      description: trimmedDescription,
       lat: selectedCoord.latitude,
       lng: selectedCoord.longitude,
       endTime,
@@ -161,10 +160,18 @@ export default function CreateEventScreen({
     const lng = Number(coord.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
-    setSelectedCoord(clampCoord({ latitude: lat, longitude: lng }));
+    setSelectedCoord(clampMapCoord({ latitude: lat, longitude: lng }));
   };
 
-  const styles = createStyles(theme);
+  const previewRegion = useMemo(
+    () => ({
+      latitude: selectedCoord.latitude,
+      longitude: selectedCoord.longitude,
+      latitudeDelta: Math.min(region.latitudeDelta, 0.04),
+      longitudeDelta: Math.min(region.longitudeDelta, 0.04),
+    }),
+    [region.latitudeDelta, region.longitudeDelta, selectedCoord.latitude, selectedCoord.longitude],
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -179,7 +186,7 @@ export default function CreateEventScreen({
         ]}
       >
         <TouchableOpacity onPress={onCancel} activeOpacity={0.7}>
-          <Text style={[styles.backText, { color: theme.primary }]}>← Назад</Text>
+          <Text style={[styles.backText, { color: theme.primary }]}>Назад</Text>
         </TouchableOpacity>
       </View>
 
@@ -191,13 +198,20 @@ export default function CreateEventScreen({
 
           <View style={styles.field}>
             <Text style={[styles.label, { color: theme.textSecondary }]}>Тип события</Text>
-            <View style={styles.typeRow}>
-              {eventTypes.map((t) => {
-                const active = type === t.value;
-                const disabled = t.value === 'official' && !canPickOfficial;
+            <View
+              style={[
+                styles.typeRow,
+                styles.typeRowWrap,
+                errors.type ? { borderColor: theme.error, backgroundColor: theme.error + '12' } : null,
+              ]}
+            >
+              {eventTypes.map((item) => {
+                const active = type === item.value;
+                const disabled = item.value === 'official' && !canPickOfficial;
+
                 return (
                   <TouchableOpacity
-                    key={t.value}
+                    key={item.value}
                     style={[
                       styles.typeChip,
                       {
@@ -208,12 +222,13 @@ export default function CreateEventScreen({
                     ]}
                     onPress={() => {
                       if (disabled) return;
-                      setType(t.value);
+                      setType(item.value);
+                      setErrors((prev) => ({ ...prev, type: undefined }));
                     }}
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.typeChipText, { color: active ? '#FFFFFF' : theme.text }]}>
-                      {t.label}
+                      {item.label}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -224,6 +239,7 @@ export default function CreateEventScreen({
                 Официальные события доступны только администратору.
               </Text>
             ) : null}
+            {errors.type ? <Text style={[styles.hint, { color: theme.error }]}>{errors.type}</Text> : null}
           </View>
 
           {canPickOfficial && isOfficial ? (
@@ -234,23 +250,28 @@ export default function CreateEventScreen({
                   styles.input,
                   {
                     backgroundColor: theme.surfaceVariant,
-                    borderColor: theme.border,
+                    borderColor: errors.endTime ? theme.error : theme.border,
                     color: theme.text,
                   },
                 ]}
                 placeholder="2026-03-10T18:00:00"
                 placeholderTextColor={theme.textDisabled}
                 value={endTimeText}
-                onChangeText={setEndTimeText}
+                onChangeText={(next) => {
+                  setEndTimeText(next);
+                  setErrors((prev) => ({ ...prev, endTime: undefined }));
+                }}
                 autoCapitalize="none"
               />
               <Text style={[styles.hint, { color: theme.textDisabled }]}>
-                Для официальных событий дата окончания обязательна (после нее событие уйдет в архив).
+                Для официальных событий дата окончания обязательна.
               </Text>
-              {endTimeText.trim().length === 0 ? (
-                <Text style={[styles.hint, { color: theme.error }]}>Поле обязательно.</Text>
-              ) : !parseEndTime() ? (
-                <Text style={[styles.hint, { color: theme.error }]}>Введите корректную дату в формате ISO.</Text>
+              {errors.endTime ? (
+                <Text style={[styles.hint, { color: theme.error }]}>{errors.endTime}</Text>
+              ) : endTimeText.trim().length > 0 && !parseEndTime() ? (
+                <Text style={[styles.hint, { color: theme.error }]}>
+                  Введите корректную дату в формате ISO.
+                </Text>
               ) : null}
             </View>
           ) : null}
@@ -262,15 +283,23 @@ export default function CreateEventScreen({
                 styles.input,
                 {
                   backgroundColor: theme.surfaceVariant,
-                  borderColor: theme.border,
+                  borderColor: errors.title ? theme.error : theme.border,
                   color: theme.text,
                 },
               ]}
               placeholder="Введите заголовок"
               placeholderTextColor={theme.textDisabled}
               value={title}
-              onChangeText={setTitle}
+              onChangeText={(next) => {
+                setTitle(next.slice(0, EVENT_TITLE_MAX_LENGTH));
+                setErrors((prev) => ({ ...prev, title: undefined }));
+              }}
+              maxLength={EVENT_TITLE_MAX_LENGTH}
             />
+            <Text style={[styles.hint, { color: theme.textDisabled }]}>
+              Макс. {EVENT_TITLE_MAX_LENGTH} символов. Сейчас: {title.length}
+            </Text>
+            {errors.title ? <Text style={[styles.hint, { color: theme.error }]}>{errors.title}</Text> : null}
           </View>
 
           <View style={styles.field}>
@@ -299,6 +328,7 @@ export default function CreateEventScreen({
           <View style={styles.field}>
             <Text style={[styles.label, { color: theme.textSecondary }]}>Место на карте</Text>
             <Text style={[styles.localityHint, { color: theme.textSecondary }]}>{LOCALITY_NOTICE_SHORT}</Text>
+
             <View
               style={[
                 styles.mapContainer,
@@ -311,14 +341,25 @@ export default function CreateEventScreen({
             >
               <MapView
                 style={styles.map}
-                region={region}
-                minZoomLevel={KAZAN_MIN_ZOOM_LEVEL}
-                onRegionChangeComplete={(r) => setRegion(clampRegion(r))}
-                onPress={handleMapPress}
+                region={previewRegion}
+                scrollEnabled={false}
+                zoomEnabled={false}
+                rotateEnabled={false}
+                pitchEnabled={false}
+                moveOnMarkerPress={false}
               >
                 <Marker coordinate={selectedCoord} />
               </MapView>
             </View>
+
+            <TouchableOpacity
+              style={[styles.mapPickerButton, { backgroundColor: theme.primary }]}
+              onPress={() => setIsMapPickerOpen(true)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.mapPickerButtonText}>Открыть карту для выбора точки</Text>
+            </TouchableOpacity>
+
             <View style={[styles.coordsBox, { backgroundColor: theme.surfaceVariant }]}>
               <Text style={[styles.coordsText, { color: theme.textSecondary }]}>
                 Координаты: {selectedCoord.latitude.toFixed(4)}, {selectedCoord.longitude.toFixed(4)}
@@ -331,7 +372,6 @@ export default function CreateEventScreen({
               style={[styles.primaryButton, { backgroundColor: theme.primary }]}
               onPress={handleSubmit}
               activeOpacity={0.8}
-              disabled={canPickOfficial && isOfficial && !parseEndTime()}
             >
               <Text style={styles.primaryButtonText}>{mode === 'edit' ? 'Сохранить' : 'Создать'}</Text>
             </TouchableOpacity>
@@ -345,6 +385,63 @@ export default function CreateEventScreen({
           </View>
         </View>
       </ScrollView>
+
+      <Modal visible={isMapPickerOpen} animationType="slide" onRequestClose={() => setIsMapPickerOpen(false)}>
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: theme.background }]} edges={['bottom']}>
+          <View
+            style={[
+              styles.modalHeader,
+              {
+                backgroundColor: theme.surface,
+                borderBottomColor: theme.border,
+                shadowColor: theme.shadow,
+                paddingTop: Math.max(insets.top, 12) + 14,
+              },
+            ]}
+          >
+            <TouchableOpacity onPress={() => setIsMapPickerOpen(false)} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={[styles.modalActionText, { color: theme.textSecondary }]}>Закрыть</Text>
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Выбор точки события</Text>
+            <TouchableOpacity onPress={() => setIsMapPickerOpen(false)} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={[styles.modalActionText, { color: theme.primary }]}>Готово</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={[styles.modalHintBox, { backgroundColor: theme.surfaceVariant, borderColor: theme.border }]}>
+            <Text style={[styles.modalHintText, { color: theme.textSecondary }]}>
+              Переместите карту и нажмите на нужное место. Ограничение по Казани сохранено.
+            </Text>
+          </View>
+
+          <MapView
+            ref={mapRef}
+            style={styles.modalMap}
+            initialRegion={region}
+            minZoomLevel={KAZAN_MIN_ZOOM_LEVEL}
+            onPanDrag={handleMapPanDrag}
+            onRegionChangeComplete={handleRegionChangeComplete}
+            onPress={handleMapPress}
+            moveOnMarkerPress={false}
+          >
+            <Marker coordinate={selectedCoord} />
+          </MapView>
+
+          <View
+            style={[
+              styles.modalCoordsBox,
+              {
+                backgroundColor: theme.surface,
+                paddingBottom: Math.max(insets.bottom, 0) + 14,
+              },
+            ]}
+          >
+            <Text style={[styles.modalCoordsText, { color: theme.textSecondary }]}>
+              Координаты: {selectedCoord.latitude.toFixed(4)}, {selectedCoord.longitude.toFixed(4)}
+            </Text>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
@@ -385,6 +482,12 @@ const createStyles = (theme: any) =>
     },
     textArea: { height: 100, textAlignVertical: 'top' },
     typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    typeRowWrap: {
+      borderWidth: 1.5,
+      borderColor: 'transparent',
+      borderRadius: 14,
+      padding: 8,
+    },
     typeChip: {
       paddingHorizontal: 14,
       paddingVertical: 10,
@@ -405,6 +508,14 @@ const createStyles = (theme: any) =>
       shadowRadius: 4,
     },
     map: { height: 240 },
+    mapPickerButton: {
+      marginBottom: 10,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    mapPickerButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
     coordsBox: {
       borderRadius: 10,
       padding: 12,
@@ -413,6 +524,44 @@ const createStyles = (theme: any) =>
       fontSize: 13,
       fontWeight: '500',
     },
+    modalContainer: { flex: 1 },
+    modalHeader: {
+      paddingHorizontal: 16,
+      paddingTop: 18,
+      paddingBottom: 14,
+      borderBottomWidth: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      elevation: 4,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+    },
+    modalActionText: { fontSize: 16, fontWeight: '700', minWidth: 72, paddingVertical: 6 },
+    modalTitle: { fontSize: 18, fontWeight: '800', flex: 1, textAlign: 'center', marginHorizontal: 8 },
+    modalHintBox: {
+      marginHorizontal: 16,
+      marginTop: 12,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+    },
+    modalHintText: { fontSize: 13, lineHeight: 19, fontWeight: '600' },
+    modalMap: { flex: 1 },
+    modalCoordsBox: {
+      margin: 16,
+      borderRadius: 14,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      elevation: 4,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+    },
+    modalCoordsText: { fontSize: 14, fontWeight: '700' },
     buttonsRow: {
       flexDirection: 'row',
       gap: 12,

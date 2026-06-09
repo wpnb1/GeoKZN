@@ -17,6 +17,7 @@ app.use(cors());
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+const EVENT_TITLE_MAX_LENGTH = 30;
 const EVENT_DESCRIPTION_MAX_LENGTH = 500;
 const CHAT_SPAM_WINDOW_MS = 12 * 1000;
 const CHAT_SPAM_MAX_MESSAGES = 4;
@@ -410,7 +411,7 @@ app.get('/events/:id/comments', async (req, res) => {
 app.post('/events', authRequired, async (req, res) => {
   const schema = z.object({
     type: z.string().min(1).max(50),
-    title: z.string().min(1).max(100),
+    title: z.string().min(1).max(EVENT_TITLE_MAX_LENGTH),
     description: z.string().max(EVENT_DESCRIPTION_MAX_LENGTH).optional(),
     latitude: z.number(),
     longitude: z.number(),
@@ -527,7 +528,7 @@ app.patch('/events/:id', authRequired, async (req, res) => {
 
   const schema = z.object({
     type: z.string().min(1).max(50).optional(),
-    title: z.string().min(1).max(100).optional(),
+    title: z.string().min(1).max(EVENT_TITLE_MAX_LENGTH).optional(),
     description: z.string().max(EVENT_DESCRIPTION_MAX_LENGTH).optional(),
     latitude: z.number().optional(),
     longitude: z.number().optional(),
@@ -893,7 +894,7 @@ app.post('/admin/events/:id/archive', authRequired, adminRequired, async (req, r
 app.post('/admin/events', authRequired, adminRequired, async (req, res) => {
   const schema = z.object({
     type: z.string().min(1).max(50).default('official'),
-    title: z.string().min(1).max(100),
+    title: z.string().min(1).max(EVENT_TITLE_MAX_LENGTH),
     description: z.string().max(EVENT_DESCRIPTION_MAX_LENGTH).optional(),
     latitude: z.number(),
     longitude: z.number(),

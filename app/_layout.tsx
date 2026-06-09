@@ -1,15 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, SafeAreaView, StatusBar } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import AdminPanelScreen from '@/components/AdminPanelScreen';
 import ChatScreen from '@/components/ChatScreen';
 import CreateEventScreen from '@/components/CreateEventScreen';
 import EventDetailsScreen from '@/components/EventDetailsScreen';
+import LoadingScreen from '@/components/LoadingScreen';
 import LoginScreen from '@/components/LoginScreen';
 import MapScreen from '@/components/MapScreen';
 import ProfileScreen from '@/components/ProfileScreen';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
-import { apiRequest } from '@/lib/api';
+import {
+  apiRequest,
+  getApiUrl,
+  getDefaultApiUrl,
+  loadApiUrlPreference,
+  resetApiUrlPreference,
+  setApiUrlPreference,
+} from '@/lib/api';
 import { formatApiErrorDetail, formatApiErrorMessage } from '@/lib/errorHints';
 import { connectRealtime, RealtimeMessage } from '@/lib/realtime';
 
@@ -143,6 +152,8 @@ function AppContent() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([]);
+  const [isBooting, setIsBooting] = useState(true);
+  const [apiUrl, setApiUrl] = useState(() => getApiUrl());
 
   const syncSelectedEvent = (nextEvents: Event[]) => {
     setSelectedEvent((prev) => {
@@ -761,6 +772,48 @@ function AppContent() {
       });
   };
 
+  const saveServerUrl = async (nextUrl: string) => {
+    const saved = await setApiUrlPreference(nextUrl);
+    setApiUrl(saved);
+    await loadEvents();
+    if (token) {
+      await loadReportReasons();
+    }
+  };
+
+  const restoreDefaultServerUrl = async () => {
+    const restored = await resetApiUrlPreference();
+    setApiUrl(restored);
+    await loadEvents();
+    if (token) {
+      await loadReportReasons();
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    (async () => {
+      const restoredApiUrl = await loadApiUrlPreference();
+      if (isMounted) {
+        setApiUrl(restoredApiUrl);
+      }
+
+      await Promise.all([
+        loadEvents(),
+        loadReportReasons(),
+        new Promise((resolve) => setTimeout(resolve, 700)),
+      ]);
+    })().finally(() => {
+      if (isMounted) setIsBooting(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (token) {
       loadReportReasons();
@@ -768,6 +821,7 @@ function AppContent() {
   }, [token]);
 
   useEffect(() => {
+    if (isBooting) return;
     if (currentScreen === 'map') {
       loadEvents();
     }
@@ -777,7 +831,7 @@ function AppContent() {
     }
     // These loaders are stable enough for demo; avoid re-running due to function identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentScreen, token, currentUser?.isAdmin]);
+  }, [currentScreen, token, currentUser?.isAdmin, isBooting]);
 
   useEffect(() => {
     if (currentScreen === 'chat' && selectedEvent) {
@@ -792,10 +846,16 @@ function AppContent() {
       setCurrentScreen('map');
       return;
     }
+    if (currentScreen === 'create' && !currentUser) {
+      Alert.alert('\u041d\u0443\u0436\u0435\u043d \u0432\u0445\u043e\u0434', '\u0412\u043e\u0439\u0434\u0438\u0442\u0435 \u0432 \u0430\u043a\u043a\u0430\u0443\u043d\u0442, \u0447\u0442\u043e\u0431\u044b \u0441\u043e\u0437\u0434\u0430\u0432\u0430\u0442\u044c \u0441\u043e\u0431\u044b\u0442\u0438\u044f.');
+      setCreateCoords(null);
+      setCurrentScreen('login');
+      return;
+    }
     if (currentScreen === 'edit' && !editEvent) {
       setCurrentScreen('map');
     }
-  }, [currentScreen, selectedEvent, editEvent]);
+  }, [currentScreen, selectedEvent, editEvent, currentUser]);
 
   useEffect(() => {
     const disconnect = connectRealtime((message: RealtimeMessage) => {
@@ -815,7 +875,7 @@ function AppContent() {
 
     return disconnect;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEvent?.id]);
+  }, [selectedEvent?.id, apiUrl]);
 
   // =========================
   // NAVIGATION
@@ -823,7 +883,11 @@ function AppContent() {
 
   let content: React.ReactNode = null;
 
-  if (currentScreen === 'login') {
+  if (isBooting) {
+    content = <LoadingScreen />;
+  }
+
+  else if (currentScreen === 'login') {
     content = (
       <LoginScreen
         onLogin={handleLogin}
@@ -833,6 +897,10 @@ function AppContent() {
           setCurrentUser(null);
           setCurrentScreen('map');
         }}
+        serverUrl={apiUrl}
+        defaultServerUrl={getDefaultApiUrl()}
+        onSaveServerUrl={saveServerUrl}
+        onResetServerUrl={restoreDefaultServerUrl}
       />
     );
   }
@@ -863,6 +931,11 @@ function AppContent() {
           latitude: number;
           longitude: number;
         }) => {
+          if (!currentUser) {
+            Alert.alert('\u041d\u0443\u0436\u0435\u043d \u0432\u0445\u043e\u0434', '\u0412\u043e\u0439\u0434\u0438\u0442\u0435 \u0432 \u0430\u043a\u043a\u0430\u0443\u043d\u0442, \u0447\u0442\u043e\u0431\u044b \u0441\u043e\u0437\u0434\u0430\u0432\u0430\u0442\u044c \u0441\u043e\u0431\u044b\u0442\u0438\u044f.');
+            setCurrentScreen('login');
+            return;
+          }
           setCreateCoords(coord);
           setCurrentScreen('create');
         }}
@@ -1014,8 +1087,10 @@ function AppContent() {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <AppContent />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <AppContent />
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }

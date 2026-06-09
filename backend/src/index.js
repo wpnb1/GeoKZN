@@ -102,7 +102,7 @@ async function getActiveUserBlock(userId) {
      FROM user_blocks
      WHERE user_id = $1
        AND is_active = TRUE
-     ORDER BY created_at DESC
+     ORDER BY blocked_at DESC
      LIMIT 1`,
     [userId],
   );

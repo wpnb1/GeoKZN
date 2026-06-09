@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Modal,
+  Platform,
   StyleSheet,
   Switch,
   Text,
@@ -59,8 +60,14 @@ export default function MapScreen({
   onMapLongPress,
 }: Props) {
   const { theme, toggleTheme, isDark } = useTheme();
+  const useNativeAndroidMarkers = Platform.OS === 'android';
   const { mapRef, region, handleMapPanDrag, handleRegionChangeComplete } =
     useBoundedMapRegion(KAZAN_CENTER);
+
+  const resetMapViewport = () => {
+    mapRef.current?.animateToRegion(KAZAN_CENTER, 220);
+  };
+
   const handleMapLongPress = currentUser
     ? (e: unknown) => {
         const coord = (e as any)?.nativeEvent?.coordinate;
@@ -98,7 +105,8 @@ export default function MapScreen({
   const [clusterPick, setClusterPick] = useState<EventWithArchive[] | null>(null);
 
   const markerItems = useMemo((): MarkerItem[] => {
-    const clusterMode = region.latitudeDelta > CLUSTER_DELTA_THRESHOLD;
+    const clusterMode =
+      !useNativeAndroidMarkers && region.latitudeDelta > CLUSTER_DELTA_THRESHOLD;
     if (!clusterMode) {
       return filteredEvents.map((event) => ({ kind: 'single' as const, event }));
     }
@@ -116,11 +124,17 @@ export default function MapScreen({
       } else {
         const lat = items.reduce((s, x) => s + x.lat, 0) / items.length;
         const lng = items.reduce((s, x) => s + x.lng, 0) / items.length;
-        out.push({ kind: 'cluster', key: `${lat.toFixed(4)}_${lng.toFixed(4)}`, events: items, lat, lng });
+        out.push({
+          kind: 'cluster',
+          key: `${lat.toFixed(4)}_${lng.toFixed(4)}`,
+          events: items,
+          lat,
+          lng,
+        });
       }
     }
     return out;
-  }, [filteredEvents, region.latitudeDelta]);
+  }, [filteredEvents, region.latitudeDelta, useNativeAndroidMarkers]);
 
   const toggleFilter = (type: EventType) => {
     setFilters((prev) => ({ ...prev, [type]: !prev[type] }));
@@ -163,18 +177,28 @@ export default function MapScreen({
             </View>
           </View>
 
-          <TouchableOpacity
-            style={[styles.themeButton, { backgroundColor: theme.surfaceVariant }]}
-            onPress={toggleTheme}
-            activeOpacity={0.7}
-          >
-            <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={theme.text} />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={[styles.themeButton, { backgroundColor: theme.surfaceVariant }]}
+              onPress={toggleTheme}
+              activeOpacity={0.7}
+            >
+              <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={theme.text} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.headerBottomRow}>
           {currentUser ? (
             <>
+              <TouchableOpacity
+                style={[styles.smallButton, { backgroundColor: theme.primary }]}
+                onPress={resetMapViewport}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.smallButtonText, { color: '#FFFFFF' }]}>Карта</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={[styles.smallButton, { backgroundColor: theme.surfaceVariant }]}
                 onPress={onProfileClick}
@@ -202,20 +226,42 @@ export default function MapScreen({
               </TouchableOpacity>
             </>
           ) : (
-            <TouchableOpacity
-              style={[styles.smallButton, { backgroundColor: theme.surfaceVariant }]}
-              onPress={onLoginClick}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.smallButtonText, { color: theme.text }]}>Войти</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={[styles.smallButton, { backgroundColor: theme.primary }]}
+                onPress={resetMapViewport}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.smallButtonText, { color: '#FFFFFF' }]}>Карта</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.smallButton, { backgroundColor: theme.surfaceVariant }]}
+                onPress={onLoginClick}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.smallButtonText, { color: theme.text }]}>Войти</Text>
+              </TouchableOpacity>
+            </>
           )}
         </View>
       </View>
 
-      <View style={[styles.localityBanner, { backgroundColor: theme.surfaceVariant, borderColor: theme.border }]}>
-        <Ionicons name="information-circle-outline" size={18} color={theme.primary} style={{ marginRight: 8 }} />
-        <Text style={[styles.localityText, { color: theme.textSecondary }]}>{LOCALITY_NOTICE_SHORT}</Text>
+      <View
+        style={[
+          styles.localityBanner,
+          { backgroundColor: theme.surfaceVariant, borderColor: theme.border },
+        ]}
+      >
+        <Ionicons
+          name="information-circle-outline"
+          size={18}
+          color={theme.primary}
+          style={{ marginRight: 8 }}
+        />
+        <Text style={[styles.localityText, { color: theme.textSecondary }]}>
+          {LOCALITY_NOTICE_SHORT}
+        </Text>
       </View>
 
       <MapView
@@ -232,7 +278,18 @@ export default function MapScreen({
           if (item.kind === 'single') {
             const event = item.event;
             const cfg = eventTypeConfig[event.type] || eventTypeConfig.other;
-            const archivedOpacity = event.isArchived ? 0.5 : 1;
+            if (useNativeAndroidMarkers) {
+              return (
+                <Marker
+                  key={event.id}
+                  coordinate={{ latitude: event.lat, longitude: event.lng }}
+                  title={event.title}
+                  description={event.description}
+                  pinColor={cfg.color}
+                  onPress={() => onEventClick(event)}
+                />
+              );
+            }
             return (
               <Marker
                 key={event.id}
@@ -245,7 +302,7 @@ export default function MapScreen({
                 <View
                   style={[
                     styles.markerCircle,
-                    { backgroundColor: cfg.color, opacity: archivedOpacity },
+                    { backgroundColor: cfg.color, opacity: event.isArchived ? 0.5 : 1 },
                   ]}
                 >
                   <Text style={styles.markerText}>{cfg.label[0] ?? '•'}</Text>
@@ -261,7 +318,12 @@ export default function MapScreen({
               onPress={() => setClusterPick(item.events)}
               tracksViewChanges={false}
             >
-              <View style={[styles.clusterBubble, { backgroundColor: theme.primary, borderColor: theme.surface }]}>
+              <View
+                style={[
+                  styles.clusterBubble,
+                  { backgroundColor: theme.primary, borderColor: theme.surface },
+                ]}
+              >
                 <Text style={styles.clusterBubbleText}>{n}</Text>
               </View>
             </Marker>
@@ -269,7 +331,12 @@ export default function MapScreen({
         })}
       </MapView>
 
-      <Modal visible={clusterPick != null} transparent animationType="fade" onRequestClose={() => setClusterPick(null)}>
+      <Modal
+        visible={clusterPick != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setClusterPick(null)}
+      >
         <View style={styles.modalWrap}>
           <TouchableOpacity
             style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.45)' }]}
@@ -277,7 +344,9 @@ export default function MapScreen({
             onPress={() => setClusterPick(null)}
           />
           <View style={[styles.modalSheet, { backgroundColor: theme.surface }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>События в этой точке</Text>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>
+              События в этой точке
+            </Text>
             <FlatList
               data={clusterPick ?? []}
               keyExtractor={(e) => e.id}
@@ -295,10 +364,16 @@ export default function MapScreen({
                   >
                     <View style={[styles.clusterDot, { backgroundColor: cfg.color }]} />
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={[styles.clusterRowTitle, { color: theme.text }]} numberOfLines={2}>
+                      <Text
+                        style={[styles.clusterRowTitle, { color: theme.text }]}
+                        numberOfLines={2}
+                      >
                         {item.title}
                       </Text>
-                      <Text style={[styles.clusterRowMeta, { color: theme.textSecondary }]} numberOfLines={1}>
+                      <Text
+                        style={[styles.clusterRowMeta, { color: theme.textSecondary }]}
+                        numberOfLines={1}
+                      >
                         {cfg.label} · {item.author}
                       </Text>
                     </View>
@@ -391,7 +466,9 @@ export default function MapScreen({
           )}
 
           <View style={[styles.counterBadge, { backgroundColor: theme.surfaceVariant }]}>
-            <Text style={[styles.counterText, { color: theme.textSecondary }]}>{filteredEvents.length}</Text>
+            <Text style={[styles.counterText, { color: theme.textSecondary }]}>
+              {filteredEvents.length}
+            </Text>
           </View>
         </View>
       </View>
@@ -413,8 +490,9 @@ const createStyles = (theme: any) =>
       shadowRadius: 8,
       borderBottomWidth: 1,
     },
-    headerTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    headerTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
     headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 },
+    headerActions: { alignItems: 'flex-end' },
     logoBadge: {
       width: 44,
       height: 44,
@@ -430,7 +508,7 @@ const createStyles = (theme: any) =>
     titleBlock: { flex: 1, minWidth: 0 },
     appTitle: { fontSize: 18, fontWeight: '800', letterSpacing: 0.3 },
     appSubtitle: { fontSize: 12, marginTop: 2 },
-    headerBottomRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    headerBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     themeButton: {
       width: 36,
       height: 36,
@@ -552,6 +630,11 @@ const createStyles = (theme: any) =>
     clusterDot: { width: 12, height: 12, borderRadius: 6 },
     clusterRowTitle: { fontSize: 15, fontWeight: '800' },
     clusterRowMeta: { fontSize: 12, fontWeight: '600', marginTop: 4 },
-    modalCloseBtn: { marginTop: 8, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+    modalCloseBtn: {
+      marginTop: 8,
+      borderRadius: 12,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
     modalCloseBtnText: { fontWeight: '900', fontSize: 15 },
   });

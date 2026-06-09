@@ -92,6 +92,14 @@ CREATE TABLE IF NOT EXISTS user_blocks (
   is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
+-- Ensure columns exist if table was created earlier.
+ALTER TABLE user_blocks
+  ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE user_blocks
+  ADD COLUMN IF NOT EXISTS unblock_at TIMESTAMPTZ;
+ALTER TABLE user_blocks
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE INDEX IF NOT EXISTS idx_user_blocks_active ON user_blocks(is_active);
 
 CREATE TABLE IF NOT EXISTS report_reasons (

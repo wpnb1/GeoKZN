@@ -14,10 +14,7 @@ import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import {
   apiRequest,
   getApiUrl,
-  getDefaultApiUrl,
   loadApiUrlPreference,
-  resetApiUrlPreference,
-  setApiUrlPreference,
 } from '@/lib/api';
 import { formatApiErrorDetail, formatApiErrorMessage } from '@/lib/errorHints';
 import { connectRealtime, RealtimeMessage } from '@/lib/realtime';
@@ -76,17 +73,10 @@ function AppContent() {
     { reason_id: number; name: string; description?: string; priority?: number }[]
   >([]);
 
-  const [currentScreen, setCurrentScreen] =
-    useState<ScreenName>('map');
-
-  const [currentUser, setCurrentUser] =
-    useState<User | null>(null);
-
-  const [selectedEvent, setSelectedEvent] =
-    useState<EventWithArchive | null>(null);
-
+  const [currentScreen, setCurrentScreen] = useState<ScreenName>('map');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<EventWithArchive | null>(null);
   const [editEvent, setEditEvent] = useState<EventWithArchive | null>(null);
-
   const [createCoords, setCreateCoords] = useState<{
     latitude: number;
     longitude: number;
@@ -138,7 +128,8 @@ function AppContent() {
         id: String(nextEventId++),
         type: 'official',
         title: 'Перекрытие улицы у Кремля',
-        description: 'Официальное сообщение администрации о перекрытии на время фестиваля.',
+        description:
+          'Официальное сообщение администрации о перекрытии на время фестиваля.',
         lat: 55.799,
         lng: 49.106,
         author: 'admin',
@@ -167,10 +158,6 @@ function AppContent() {
     });
   };
 
-  // =========================
-  // ARCHIVE LOGIC
-  // =========================
-
   const eventsWithArchiveFlag = useMemo<EventWithArchive[]>(() => {
     return events.map((e) => ({
       ...e,
@@ -187,10 +174,6 @@ function AppContent() {
     () => eventsWithArchiveFlag.filter((e) => e.isArchived),
     [eventsWithArchiveFlag],
   );
-
-  // =========================
-  // AUTH
-  // =========================
 
   const handleLogin = async (username: string, password: string) => {
     try {
@@ -296,10 +279,6 @@ function AppContent() {
     setCurrentScreen('map');
   };
 
-  // =========================
-  // EVENTS
-  // =========================
-
   const handleArchiveEvent = (eventId: string) => {
     const idNum = Number(eventId);
     if (!Number.isFinite(idNum)) return;
@@ -373,10 +352,6 @@ function AppContent() {
         alertApiError(e);
       });
   };
-
-  // =========================
-  // COMMENTS
-  // =========================
 
   const addCommentBestEffort = async (eventId: string, text: string) => {
     if (!currentUser || !token) {
@@ -613,17 +588,11 @@ function AppContent() {
     }
   };
 
-  // =========================
-  // API SYNC (best-effort)
-  // =========================
-
   const loadReportReasons = async () => {
     try {
       const data = await apiRequest<{
         items: { reason_id: number; name: string; description?: string; priority?: number }[];
-      }>(
-        '/report-reasons',
-      );
+      }>('/report-reasons');
       setReportReasons(data.items);
       const other = data.items.find((r) => r.name === 'other') ?? data.items[0];
       if (other) setReportReasonOtherId(other.reason_id);
@@ -772,24 +741,6 @@ function AppContent() {
       });
   };
 
-  const saveServerUrl = async (nextUrl: string) => {
-    const saved = await setApiUrlPreference(nextUrl);
-    setApiUrl(saved);
-    await loadEvents();
-    if (token) {
-      await loadReportReasons();
-    }
-  };
-
-  const restoreDefaultServerUrl = async () => {
-    const restored = await resetApiUrlPreference();
-    setApiUrl(restored);
-    await loadEvents();
-    if (token) {
-      await loadReportReasons();
-    }
-  };
-
   useEffect(() => {
     let isMounted = true;
 
@@ -811,7 +762,6 @@ function AppContent() {
     return () => {
       isMounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -829,15 +779,12 @@ function AppContent() {
       loadAdminReports();
       loadAdminUsers();
     }
-    // These loaders are stable enough for demo; avoid re-running due to function identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentScreen, token, currentUser?.isAdmin, isBooting]);
 
   useEffect(() => {
     if (currentScreen === 'chat' && selectedEvent) {
       loadCommentsForEvent(selectedEvent.id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentScreen, selectedEvent?.id]);
 
   useEffect(() => {
@@ -847,7 +794,7 @@ function AppContent() {
       return;
     }
     if (currentScreen === 'create' && !currentUser) {
-      Alert.alert('\u041d\u0443\u0436\u0435\u043d \u0432\u0445\u043e\u0434', '\u0412\u043e\u0439\u0434\u0438\u0442\u0435 \u0432 \u0430\u043a\u043a\u0430\u0443\u043d\u0442, \u0447\u0442\u043e\u0431\u044b \u0441\u043e\u0437\u0434\u0430\u0432\u0430\u0442\u044c \u0441\u043e\u0431\u044b\u0442\u0438\u044f.');
+      Alert.alert('Нужен вход', 'Войдите в аккаунт, чтобы создавать события.');
       setCreateCoords(null);
       setCurrentScreen('login');
       return;
@@ -874,20 +821,13 @@ function AppContent() {
     });
 
     return disconnect;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEvent?.id, apiUrl]);
-
-  // =========================
-  // NAVIGATION
-  // =========================
 
   let content: React.ReactNode = null;
 
   if (isBooting) {
     content = <LoadingScreen />;
-  }
-
-  else if (currentScreen === 'login') {
+  } else if (currentScreen === 'login') {
     content = (
       <LoginScreen
         onLogin={handleLogin}
@@ -897,42 +837,25 @@ function AppContent() {
           setCurrentUser(null);
           setCurrentScreen('map');
         }}
-        serverUrl={apiUrl}
-        defaultServerUrl={getDefaultApiUrl()}
-        onSaveServerUrl={saveServerUrl}
-        onResetServerUrl={restoreDefaultServerUrl}
       />
     );
-  }
-
-  else if (currentScreen === 'map') {
+  } else if (currentScreen === 'map') {
     content = (
       <MapScreen
         events={eventsWithArchiveFlag}
         currentUser={currentUser}
-        onCreateEvent={() =>
-          setCurrentScreen('create')
-        }
+        onCreateEvent={() => setCurrentScreen('create')}
         onEventClick={(event: EventWithArchive) => {
           setSelectedEvent(event);
           setCurrentScreen('event');
         }}
-        onProfileClick={() =>
-          setCurrentScreen('profile')
-        }
-        onLoginClick={() =>
-          setCurrentScreen('login')
-        }
-        onAdminClick={() =>
-          setCurrentScreen('admin')
-        }
+        onProfileClick={() => setCurrentScreen('profile')}
+        onLoginClick={() => setCurrentScreen('login')}
+        onAdminClick={() => setCurrentScreen('admin')}
         onLogout={handleLogout}
-        onMapLongPress={(coord: {
-          latitude: number;
-          longitude: number;
-        }) => {
+        onMapLongPress={(coord: { latitude: number; longitude: number }) => {
           if (!currentUser) {
-            Alert.alert('\u041d\u0443\u0436\u0435\u043d \u0432\u0445\u043e\u0434', '\u0412\u043e\u0439\u0434\u0438\u0442\u0435 \u0432 \u0430\u043a\u043a\u0430\u0443\u043d\u0442, \u0447\u0442\u043e\u0431\u044b \u0441\u043e\u0437\u0434\u0430\u0432\u0430\u0442\u044c \u0441\u043e\u0431\u044b\u0442\u0438\u044f.');
+            Alert.alert('Нужен вход', 'Войдите в аккаунт, чтобы создавать события.');
             setCurrentScreen('login');
             return;
           }
@@ -941,22 +864,13 @@ function AppContent() {
         }}
       />
     );
-  }
-
-  else if (
-    currentScreen === 'event' &&
-    selectedEvent
-  ) {
+  } else if (currentScreen === 'event' && selectedEvent) {
     content = (
       <EventDetailsScreen
         event={selectedEvent}
         currentUser={currentUser}
-        onBack={() =>
-          setCurrentScreen('map')
-        }
-        onOpenChat={() =>
-          setCurrentScreen('chat')
-        }
+        onBack={() => setCurrentScreen('map')}
+        onOpenChat={() => setCurrentScreen('chat')}
         onDelete={handleDeleteEvent}
         onEdit={() => {
           setEditEvent(selectedEvent);
@@ -965,59 +879,35 @@ function AppContent() {
         onComplaint={handleComplaintEvent}
       />
     );
-  }
-
-  else if (
-    currentScreen === 'chat' &&
-    selectedEvent
-  ) {
-    const eventComments = comments.filter(
-      (c) => c.eventId === selectedEvent.id,
-    );
+  } else if (currentScreen === 'chat' && selectedEvent) {
+    const eventComments = comments.filter((c) => c.eventId === selectedEvent.id);
 
     content = (
       <ChatScreen
         event={selectedEvent}
         comments={eventComments}
         currentUser={currentUser}
-        onBack={() =>
-          setCurrentScreen('event')
-        }
+        onBack={() => setCurrentScreen('event')}
         onAddComment={addCommentBestEffort}
         onComplaint={handleComplaintComment}
         onDeleteComment={handleDeleteComment}
         onEditComment={handleEditComment}
       />
     );
-  }
-
-  else if (
-    currentScreen === 'profile' &&
-    currentUser
-  ) {
-    const userEvents = visibleEvents.filter(
-      (e) =>
-        e.author === currentUser.username,
-    );
+  } else if (currentScreen === 'profile' && currentUser) {
+    const userEvents = visibleEvents.filter((e) => e.author === currentUser.username);
 
     content = (
       <ProfileScreen
         user={currentUser}
         events={userEvents}
-        onBack={() =>
-          setCurrentScreen('map')
-        }
+        onBack={() => setCurrentScreen('map')}
         onLogout={handleLogout}
         onUpdateProfile={updateProfileBestEffort}
         onChangePassword={changePasswordBestEffort}
       />
     );
-  }
-
-  else if (
-    currentScreen === 'admin' &&
-    currentUser?.isAdmin
-  ) {
+  } else if (currentScreen === 'admin' && currentUser?.isAdmin) {
     content = (
       <AdminPanelScreen
         complaints={complaints}
@@ -1028,43 +918,44 @@ function AppContent() {
         onBack={() => setCurrentScreen('map')}
         onArchiveEvent={handleArchiveEvent}
         onCreateOfficialEvent={createOfficialEventBestEffort}
-        onRejectComplaint={(reportId) => adminReportAction('reject', reportId)}
-        onDeleteComplaintTarget={(reportId) => adminReportAction('delete-target', reportId)}
-        onBlockComplaintTarget={(reportId) => adminReportAction('block-target', reportId)}
+        onRejectComplaint={(reportId: string) => adminReportAction('reject', reportId)}
+        onDeleteComplaintTarget={(reportId: string) => adminReportAction('delete-target', reportId)}
+        onBlockComplaintTarget={(reportId: string) => adminReportAction('block-target', reportId)}
         onReloadAdminUsers={loadAdminUsers}
         onBlockUser={adminBlockUserById}
         onUnblockUser={adminUnblockUserById}
       />
     );
-  }
-
-  else if (
-    currentScreen === 'create' &&
-    currentUser
-  ) {
+  } else if (currentScreen === 'create' && currentUser) {
     content = (
       <CreateEventScreen
         currentUser={currentUser}
         initialCoords={createCoords}
         onCreateEvent={createEventBestEffort}
+        onGoToMap={() => {
+          setCreateCoords(null);
+          setEditEvent(null);
+          setSelectedEvent(null);
+          setCurrentScreen('map');
+        }}
         onCancel={() => {
           setCreateCoords(null);
           setCurrentScreen('map');
         }}
       />
     );
-  }
-
-  else if (
-    currentScreen === 'edit' &&
-    currentUser &&
-    editEvent
-  ) {
+  } else if (currentScreen === 'edit' && currentUser && editEvent) {
     content = (
       <CreateEventScreen
         currentUser={currentUser}
         initialEvent={editEvent}
         onUpdateEvent={updateEventBestEffort}
+        onGoToMap={() => {
+          setCreateCoords(null);
+          setEditEvent(null);
+          setSelectedEvent(null);
+          setCurrentScreen('map');
+        }}
         onCancel={() => {
           setEditEvent(null);
           setCurrentScreen('event');
@@ -1075,11 +966,7 @@ function AppContent() {
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      <StatusBar
-        barStyle={
-          isDark ? 'light-content' : 'dark-content'
-        }
-      />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       {content}
     </SafeAreaView>
   );

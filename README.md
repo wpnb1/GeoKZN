@@ -102,7 +102,7 @@ Get-NetTCPConnection -LocalPort 4000 -State Listen | Format-Table -Auto
 Проверь:
 
 - PostgreSQL запущен
-- параметры DB_* в `backend/.env` корректные
+- параметры DB\_\* в `backend/.env` корректные
 - база geomessenger и пользователь geomessenger_user существуют и имеют права
 
 ## Структура проекта

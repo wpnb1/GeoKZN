@@ -17,10 +17,6 @@ type Props = {
   onLogin: (username: string, password: string) => Promise<void>;
   onRegister: (username: string, password: string) => Promise<void>;
   onGuest?: () => void;
-  serverUrl: string;
-  defaultServerUrl: string;
-  onSaveServerUrl: (url: string) => Promise<void>;
-  onResetServerUrl: () => Promise<void>;
 };
 
 type FieldErrors = {
@@ -32,10 +28,6 @@ export default function LoginScreen({
   onLogin,
   onRegister,
   onGuest,
-  serverUrl,
-  defaultServerUrl,
-  onSaveServerUrl,
-  onResetServerUrl,
 }: Props) {
   const { theme } = useTheme();
   const [isRegister, setIsRegister] = useState(false);
@@ -44,9 +36,6 @@ export default function LoginScreen({
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
-  const [showServerSettings, setShowServerSettings] = useState(false);
-  const [serverDraft, setServerDraft] = useState(serverUrl);
-  const [serverMessage, setServerMessage] = useState('');
 
   const handleSubmit = async () => {
     setError('');
@@ -84,30 +73,7 @@ export default function LoginScreen({
     }
   };
 
-  const handleSaveServerUrl = async () => {
-    try {
-      await onSaveServerUrl(serverDraft);
-      setServerMessage('Адрес сервера сохранен.');
-      setError('');
-    } catch (e: any) {
-      setServerMessage(e?.message ? String(e.message) : 'Не удалось сохранить адрес сервера.');
-    }
-  };
-
-  const handleResetServerUrl = async () => {
-    try {
-      await onResetServerUrl();
-      setServerDraft(defaultServerUrl);
-      setServerMessage('Возвращен адрес по умолчанию.');
-      setError('');
-    } catch (e: any) {
-      setServerMessage(e?.message ? String(e.message) : 'Не удалось вернуть адрес по умолчанию.');
-    }
-  };
-
   const styles = createStyles(theme);
-  const isServerMessageSuccess =
-    serverMessage.includes('сохран') || serverMessage.includes('Возвращ');
 
   return (
     <KeyboardAvoidingView
@@ -202,7 +168,9 @@ export default function LoginScreen({
             {submitting ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.buttonText}>{isRegister ? 'Зарегистрироваться' : 'Войти'}</Text>
+              <Text style={styles.buttonText}>
+                {isRegister ? 'Зарегистрироваться' : 'Войти'}
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -216,88 +184,6 @@ export default function LoginScreen({
               <Text style={[styles.guestButtonText, { color: theme.text }]}>Войти как гость</Text>
             </TouchableOpacity>
           ) : null}
-
-          <View style={[styles.serverCard, { borderColor: theme.border, backgroundColor: theme.surfaceVariant }]}>
-            <Text style={[styles.serverLabel, { color: theme.textSecondary }]}>Сервер</Text>
-            <Text style={[styles.serverValue, { color: theme.text }]} numberOfLines={2}>
-              {serverUrl}
-            </Text>
-
-            <TouchableOpacity
-              onPress={() => {
-                setShowServerSettings((prev) => !prev);
-                setServerDraft(serverUrl);
-                setServerMessage('');
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.link, { color: theme.primary, marginTop: 10 }]}>
-                {showServerSettings ? 'Скрыть настройки сервера' : 'Изменить адрес сервера'}
-              </Text>
-            </TouchableOpacity>
-
-            {showServerSettings ? (
-              <View style={styles.serverSettingsBox}>
-                <TextInput
-                  style={[
-                    styles.input,
-                    {
-                      backgroundColor: theme.surface,
-                      borderColor: theme.border,
-                      color: theme.text,
-                    },
-                  ]}
-                  placeholder="http://192.168.0.10:4000"
-                  placeholderTextColor={theme.textDisabled}
-                  value={serverDraft}
-                  onChangeText={(next) => {
-                    setServerDraft(next);
-                    setServerMessage('');
-                  }}
-                  editable={!submitting}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                />
-
-                <Text
-                  style={[
-                    styles.serverHint,
-                    {
-                      color: serverMessage
-                        ? isServerMessageSuccess
-                          ? theme.success
-                          : theme.error
-                        : theme.textSecondary,
-                    },
-                  ]}
-                >
-                  {serverMessage || 'Для APK укажите IP ноутбука или другого сервера с backend.'}
-                </Text>
-
-                <View style={styles.serverButtonsRow}>
-                  <TouchableOpacity
-                    style={[styles.serverButton, { backgroundColor: theme.primary }]}
-                    onPress={handleSaveServerUrl}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.serverButtonText}>Сохранить</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.serverButton,
-                      { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1.5 },
-                    ]}
-                    onPress={handleResetServerUrl}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.serverButtonText, { color: theme.text }]}>По умолчанию</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : null}
-          </View>
 
           <TouchableOpacity
             onPress={() => {
@@ -424,49 +310,6 @@ const createStyles = (theme: any) =>
     guestButtonText: {
       fontWeight: '600',
       fontSize: 15,
-    },
-    serverCard: {
-      borderRadius: 14,
-      borderWidth: 1.5,
-      padding: 14,
-      marginTop: 14,
-    },
-    serverLabel: {
-      fontSize: 12,
-      fontWeight: '700',
-      marginBottom: 6,
-      textTransform: 'uppercase',
-      letterSpacing: 0.4,
-    },
-    serverValue: {
-      fontSize: 14,
-      fontWeight: '600',
-      lineHeight: 20,
-    },
-    serverSettingsBox: {
-      marginTop: 12,
-    },
-    serverHint: {
-      fontSize: 12,
-      fontWeight: '500',
-      lineHeight: 18,
-      marginTop: 8,
-    },
-    serverButtonsRow: {
-      flexDirection: 'row',
-      gap: 10,
-      marginTop: 12,
-    },
-    serverButton: {
-      flex: 1,
-      borderRadius: 12,
-      paddingVertical: 12,
-      alignItems: 'center',
-    },
-    serverButtonText: {
-      color: '#FFFFFF',
-      fontWeight: '700',
-      fontSize: 14,
     },
     link: {
       textAlign: 'center',

@@ -38,6 +38,7 @@ type Props = {
   onCreateEvent?: (event: CreatePayload) => void;
   onUpdateEvent?: (eventId: string, event: CreatePayload) => void;
   onCancel: () => void;
+  onGoToMap?: () => void;
   initialCoords?: { latitude: number; longitude: number } | null;
   initialEvent?: EventWithArchive | null;
 };
@@ -61,6 +62,7 @@ export default function CreateEventScreen({
   onCreateEvent,
   onUpdateEvent,
   onCancel,
+  onGoToMap,
   initialCoords,
   initialEvent,
 }: Props) {
@@ -97,6 +99,10 @@ export default function CreateEventScreen({
   const [selectedCoord, setSelectedCoord] = useState<{ latitude: number; longitude: number }>(
     clampMapCoord(initialCoord),
   );
+  const handleGoToMainMap = () => {
+    setIsMapPickerOpen(false);
+    onGoToMap?.();
+  };
 
   const canPickOfficial = currentUser.isAdmin;
   const isOfficial = type === 'official';
@@ -427,6 +433,14 @@ export default function CreateEventScreen({
             <Marker coordinate={selectedCoord} />
           </MapView>
 
+          <TouchableOpacity
+            style={[styles.modalMapHomeButton, { backgroundColor: theme.primary, shadowColor: theme.shadow }]}
+            onPress={handleGoToMainMap}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.modalMapHomeButtonText}>Карта</Text>
+          </TouchableOpacity>
+
           <View
             style={[
               styles.modalCoordsBox,
@@ -551,6 +565,23 @@ const createStyles = (theme: any) =>
     },
     modalHintText: { fontSize: 13, lineHeight: 19, fontWeight: '600' },
     modalMap: { flex: 1 },
+    modalMapHomeButton: {
+      position: 'absolute',
+      top: 104,
+      right: 16,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      elevation: 5,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.18,
+      shadowRadius: 6,
+    },
+    modalMapHomeButtonText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '800',
+    },
     modalCoordsBox: {
       margin: 16,
       borderRadius: 14,

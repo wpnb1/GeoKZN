@@ -175,7 +175,7 @@ function AppContent() {
     [eventsWithArchiveFlag],
   );
 
-  const handleLogin = async (username: string, password: string) => {
+  const handleLogin = async (email: string, password: string) => {
     try {
       const data = await apiRequest<{
         token: string;
@@ -186,7 +186,7 @@ function AppContent() {
           createdAt: string;
           avatarEmoji?: string | null;
         };
-      }>('/auth/login', { method: 'POST', body: { username, password } });
+      }>('/auth/login', { method: 'POST', body: { email, password } });
 
       setToken(data.token);
       const user: User = {
@@ -203,7 +203,7 @@ function AppContent() {
     }
   };
 
-  const handleRegister = async (username: string, password: string) => {
+  const handleRegister = async (email: string, password: string) => {
     try {
       const data = await apiRequest<{
         token: string;
@@ -214,7 +214,7 @@ function AppContent() {
           createdAt: string;
           avatarEmoji?: string | null;
         };
-      }>('/auth/register', { method: 'POST', body: { username, password } });
+      }>('/auth/register', { method: 'POST', body: { email, password } });
 
       setToken(data.token);
       const user: User = {

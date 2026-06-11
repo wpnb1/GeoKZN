@@ -1,6 +1,6 @@
 import type { ApiError } from './api';
 
-/** Человекочитаемое сообщение об ошибке API + что сделать пользователю */
+/** Human-readable API error message plus a user hint */
 export function formatApiErrorDetail(error: unknown): { summary: string; hint: string } {
   const err = error as Partial<ApiError> & { status?: number };
   const raw =
@@ -12,16 +12,16 @@ export function formatApiErrorDetail(error: unknown): { summary: string; hint: s
 
   const hints: Record<string, { summary: string; hint: string }> = {
     'Invalid credentials': {
-      summary: 'Неверный логин или пароль.',
-      hint: 'Проверьте раскладку клавиатуры и Caps Lock. Если забыли пароль — смените его в профиле после входа или создайте новый аккаунт.',
+      summary: 'Неверный email или пароль.',
+      hint: 'Проверьте адрес почты, раскладку клавиатуры и Caps Lock. Если пароль забыт, создайте новый аккаунт или смените пароль после входа в существующий.',
     },
     'User is blocked': {
       summary: 'Аккаунт заблокирован.',
       hint: 'Обратитесь к администратору сервиса для разблокировки.',
     },
     'User already exists': {
-      summary: 'Такой пользователь уже зарегистрирован.',
-      hint: 'Войдите под этим логином или выберите другой никнейм.',
+      summary: 'Пользователь с таким email уже зарегистрирован.',
+      hint: 'Войдите с этой почтой или используйте другой email.',
     },
     'Username already exists': {
       summary: 'Этот никнейм уже занят.',
@@ -49,17 +49,17 @@ export function formatApiErrorDetail(error: unknown): { summary: string; hint: s
     },
     'Official events must be created via /admin/events': {
       summary: 'Официальное событие создаётся только из админ-панели.',
-      hint: 'Войдите как администратор и создайте событие на вкладке «Создать».',
+      hint: 'Войдите как администратор и создайте событие на вкладке "Создать".',
     },
     'expiresAt is required for official events': {
       summary: 'Для официального события нужна дата окончания.',
-      hint: 'Укажите время окончания в формате ISO (например 2026-05-13T18:00:00).',
+      hint: 'Укажите время окончания в формате ISO, например 2026-05-13T18:00:00.',
     },
     'Unknown event type': {
       summary: 'Неизвестный тип события.',
-      hint: 'Выберите тип из списка: ДТП, Пост ДПС, Чат, Другое или Официальное (для админа).',
+      hint: 'Выберите тип из доступного списка.',
     },
-    'Forbidden': {
+    Forbidden: {
       summary: 'Недостаточно прав для этого действия.',
       hint: 'Войдите под нужным аккаунтом или обратитесь к администратору.',
     },
@@ -77,7 +77,7 @@ export function formatApiErrorDetail(error: unknown): { summary: string; hint: s
     },
     'Invalid input': {
       summary: 'Данные заполнены некорректно.',
-      hint: 'Проверьте длину полей: заголовок до 100 символов, описание до лимита, пароль минимум 4 символа.',
+      hint: 'Проверьте email, пароль и ограничения длины полей.',
     },
   };
 

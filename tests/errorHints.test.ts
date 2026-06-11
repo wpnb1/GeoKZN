@@ -6,7 +6,7 @@ import { formatApiErrorDetail, formatApiErrorMessage } from '../lib/errorHints';
 test('formatApiErrorDetail returns mapped invalid credentials message', () => {
   const result = formatApiErrorDetail({ error: 'Invalid credentials' });
 
-  assert.equal(result.summary, 'Неверный логин или пароль.');
+  assert.equal(result.summary, 'Неверный email или пароль.');
   assert.match(result.hint, /Caps Lock/i);
 });
 

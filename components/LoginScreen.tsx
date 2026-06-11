@@ -14,15 +14,17 @@ import {
 } from 'react-native';
 
 type Props = {
-  onLogin: (username: string, password: string) => Promise<void>;
-  onRegister: (username: string, password: string) => Promise<void>;
+  onLogin: (email: string, password: string) => Promise<void>;
+  onRegister: (email: string, password: string) => Promise<void>;
   onGuest?: () => void;
 };
 
 type FieldErrors = {
-  username?: string;
+  email?: string;
   password?: string;
 };
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginScreen({
   onLogin,
@@ -31,7 +33,7 @@ export default function LoginScreen({
 }: Props) {
   const { theme } = useTheme();
   const [isRegister, setIsRegister] = useState(false);
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -40,14 +42,14 @@ export default function LoginScreen({
   const handleSubmit = async () => {
     setError('');
 
-    const u = username.trim();
+    const nextEmail = email.trim().toLowerCase();
     const p = password;
     const nextErrors: FieldErrors = {};
 
-    if (!u) {
-      nextErrors.username = 'Введите логин.';
-    } else if (isRegister && u.length < 3) {
-      nextErrors.username = 'Логин должен содержать минимум 3 символа.';
+    if (!nextEmail) {
+      nextErrors.email = 'Введите email.';
+    } else if (!EMAIL_REGEX.test(nextEmail)) {
+      nextErrors.email = 'Введите корректный email.';
     }
 
     if (!p) {
@@ -62,9 +64,9 @@ export default function LoginScreen({
     setSubmitting(true);
     try {
       if (isRegister) {
-        await onRegister(u, p);
+        await onRegister(nextEmail, p);
       } else {
-        await onLogin(u, p);
+        await onLogin(nextEmail, p);
       }
     } catch (e: any) {
       setError(e?.message ? String(e.message) : 'Ошибка авторизации.');
@@ -99,30 +101,33 @@ export default function LoginScreen({
           </Text>
 
           <View style={styles.field}>
-            <Text style={[styles.label, { color: theme.textSecondary }]}>Логин</Text>
+            <Text style={[styles.label, { color: theme.textSecondary }]}>Email</Text>
             <TextInput
               style={[
                 styles.input,
                 {
                   backgroundColor: theme.surfaceVariant,
-                  borderColor: fieldErrors.username ? theme.error : theme.border,
+                  borderColor: fieldErrors.email ? theme.error : theme.border,
                   color: theme.text,
                 },
               ]}
-              placeholder="Введите логин"
+              placeholder="Введите email"
               placeholderTextColor={theme.textDisabled}
-              value={username}
+              value={email}
               onChangeText={(next) => {
-                setUsername(next);
-                setFieldErrors((prev) => ({ ...prev, username: undefined }));
+                setEmail(next);
+                setFieldErrors((prev) => ({ ...prev, email: undefined }));
                 setError('');
               }}
               editable={!submitting}
               autoCapitalize="none"
               autoCorrect={false}
+              keyboardType="email-address"
+              textContentType="emailAddress"
+              autoComplete="email"
             />
-            {fieldErrors.username ? (
-              <Text style={[styles.fieldError, { color: theme.error }]}>{fieldErrors.username}</Text>
+            {fieldErrors.email ? (
+              <Text style={[styles.fieldError, { color: theme.error }]}>{fieldErrors.email}</Text>
             ) : null}
           </View>
 

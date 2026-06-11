@@ -85,6 +85,31 @@ async function getEventTypeIdByName(name) {
   return rows[0]?.type_id ?? null;
 }
 
+function normalizeEmail(value) {
+  return String(value).trim().toLowerCase();
+}
+
+async function generateUniqueUsername(email) {
+  const localPart = normalizeEmail(email).split('@')[0] ?? '';
+  const base =
+    localPart
+      .replace(/[^a-z0-9._-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^[._-]+|[._-]+$/g, '')
+      .slice(0, 50) || 'user';
+
+  for (let index = 0; index < 1000; index += 1) {
+    const suffix = index === 0 ? '' : `_${index}`;
+    const candidate = `${base.slice(0, 50 - suffix.length)}${suffix}`;
+    const { rows } = await query('SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1', [candidate]);
+    if (rows.length === 0) {
+      return candidate;
+    }
+  }
+
+  return `user_${Date.now().toString().slice(-8)}`;
+}
+
 function mapUserRow(row) {
   return {
     userId: row.user_id,
@@ -137,26 +162,38 @@ async function releaseExpiredBlocksForUser(userId) {
 
 async function ensureDefaultAdmin() {
   const username = 'Admin';
+  const email = 'admin@geokzn.local';
   const password = '1234';
 
-  const { rows } = await query('SELECT user_id FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1', [username]);
-  if (rows.length > 0) return;
+  const { rows } = await query(
+    'SELECT user_id, email FROM users WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2) LIMIT 1',
+    [username, email],
+  );
+  if (rows.length > 0) {
+    if (!rows[0].email) {
+      try {
+        await query('UPDATE users SET email = $2 WHERE user_id = $1 AND email IS NULL', [rows[0].user_id, email]);
+      } catch {
+        // ignore unique-conflict edge case for demo startup
+      }
+    }
+    return;
+  }
 
   const passwordHash = await bcrypt.hash(password, 10);
   await query(
-    `INSERT INTO users (username, password_hash, role)
-     VALUES ($1, $2, 'admin')`,
-    [username, passwordHash],
+    `INSERT INTO users (username, email, password_hash, role)
+     VALUES ($1, $2, $3, 'admin')`,
+    [username, email, passwordHash],
   );
-  console.log('Created default admin user: Admin / 1234');
+  console.log('Created default admin user: admin@geokzn.local / 1234');
 }
 
 // ---------- Auth ----------
 
 app.post('/auth/register', async (req, res) => {
   const schema = z.object({
-    username: z.string().min(3).max(50),
-    email: z.string().email().optional(),
+    email: z.string().trim().email().max(100),
     password: z.string().min(4).max(200),
   });
 
@@ -165,16 +202,18 @@ app.post('/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
 
-  const { username, email, password } = parsed.data;
+  const email = normalizeEmail(parsed.data.email);
+  const username = await generateUniqueUsername(email);
+  const { password } = parsed.data;
   const passwordHash = await bcrypt.hash(password, 10);
   const role = 'user';
 
   try {
     const { rows } = await query(
-      `INSERT INTO users (username, email, password_hash, role)
+       `INSERT INTO users (username, email, password_hash, role)
        VALUES ($1, $2, $3, $4)
        RETURNING user_id, username, role, is_blocked, avatar_emoji, created_at`,
-      [username, email ?? null, passwordHash, role],
+      [username, email, passwordHash, role],
     );
 
     const user = mapUserRow(rows[0]);
@@ -187,7 +226,7 @@ app.post('/auth/register', async (req, res) => {
 
 app.post('/auth/login', async (req, res) => {
   const schema = z.object({
-    username: z.string().min(1).max(50),
+    email: z.string().trim().email().max(100),
     password: z.string().min(1).max(200),
   });
 
@@ -196,10 +235,14 @@ app.post('/auth/login', async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
 
-  const { username, password } = parsed.data;
+  const email = normalizeEmail(parsed.data.email);
+  const { password } = parsed.data;
   const { rows } = await query(
-    'SELECT user_id, username, role, is_blocked, avatar_emoji, created_at, password_hash FROM users WHERE username = $1',
-    [username],
+    `SELECT user_id, username, role, is_blocked, avatar_emoji, created_at, password_hash
+     FROM users
+     WHERE LOWER(COALESCE(email, username)) = LOWER($1)
+     LIMIT 1`,
+    [email],
   );
 
   const row = rows[0];
